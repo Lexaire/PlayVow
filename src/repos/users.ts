@@ -26,6 +26,14 @@ export type UpsertUserBySteamIdInput = {
   readonly lastSyncedAt?: Date | null
 }
 
+export const countAdmins = async (db: DbOrTx): Promise<number> => {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(users)
+    .where(eq(users.role, 'admin'))
+  return Number(row?.count ?? 0)
+}
+
 export const findUserBySteamId = async (db: DbOrTx, steamId: SteamId): Promise<User | null> => {
   const [row] = await db.select().from(users).where(eq(users.steamId, steamId)).limit(1)
   return row ?? null

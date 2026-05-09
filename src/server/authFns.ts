@@ -5,7 +5,7 @@ import { z } from 'zod'
 
 import { env } from '#/config/env'
 import { dbWrite } from '#/db/client'
-import { findUserBySteamId, setUserRole, upsertUserBySteamId } from '#/repos/users'
+import { countAdmins, findUserBySteamId, setUserRole, upsertUserBySteamId } from '#/repos/users'
 import { setSession, signOut } from '#/server/auth'
 import { getOAuthState, setOAuthState } from '#/server/session'
 import { buildSteamLoginUrl, verifySteamCallback } from '#/server/steamAuth'
@@ -76,17 +76,22 @@ export const completeSteamLogin = createServerFn({ method: 'POST' })
     // 4) Upsert. We treat "row didn't exist before this call" as the
     //    first-login signal; only that case fires the env-admin bootstrap so
     //    a deliberate later demotion doesn't get silently re-promoted on
-    //    the next sign-in.
+    //    the next sign-in. Dev mode adds a second path: if no admin exists
+    //    yet, the first Steam login becomes admin so a fresh local checkout
+    //    is usable without setting ADMIN_STEAM_IDS by hand.
     const db = dbWrite()
     const existed = await findUserBySteamId(db, steamId)
     const user = await upsertUserBySteamId(db, { steamId })
 
-    if (existed === null && env.ADMIN_STEAM_IDS.includes(steamId) && user.role !== 'admin') {
+    const isFirstLogin = existed === null
+    const envBootstrap = env.ADMIN_STEAM_IDS.includes(steamId)
+    const devBootstrap = env.NODE_ENV === 'development' && (await countAdmins(db)) === 0
+    if (isFirstLogin && (envBootstrap || devBootstrap) && user.role !== 'admin') {
       await setUserRole(db, {
         userId: user.id,
         newRole: 'admin',
         actorUserId: user.id,
-        reason: 'bootstrap',
+        reason: devBootstrap && !envBootstrap ? 'dev_bootstrap' : 'bootstrap',
       })
     }
 
