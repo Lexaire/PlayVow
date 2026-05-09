@@ -1,0 +1,5 @@
+[tools]
+bun = "1.3.13"
+# Keep in sync with NODE_VERSION in infra/fetch-node.sh — the server runs
+# the bundled binary; mise installs the same version locally for dev.
+node = "24.15.0"

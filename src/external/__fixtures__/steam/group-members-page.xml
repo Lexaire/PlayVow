@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?><memberList>
+<groupID64>103582791400000001</groupID64>
+<groupDetails>
+		<groupName><![CDATA[TalePlay]]></groupName>
+		<groupURL><![CDATA[taleplay]]></groupURL>
+		<headline><![CDATA[Synthetic fixture group.]]></headline>
+		<summary><![CDATA[Test fixture]]></summary>
+		<avatarIcon><![CDATA[https://avatars.akamai.steamstatic.com/0000000000000000000000000000000000000002.jpg]]></avatarIcon>
+		<avatarMedium><![CDATA[https://avatars.akamai.steamstatic.com/0000000000000000000000000000000000000002_medium.jpg]]></avatarMedium>
+		<avatarFull><![CDATA[https://avatars.akamai.steamstatic.com/0000000000000000000000000000000000000002_full.jpg]]></avatarFull>
+		<memberCount>437</memberCount>
+		<membersInChat>21</membersInChat>
+		<membersInGame>23</membersInGame>
+		<membersOnline>119</membersOnline>
+</groupDetails>
+<memberCount>437</memberCount>
+<totalPages>1</totalPages>
+<currentPage>1</currentPage>
+<startingMember>0</startingMember>
+<members>
+<steamID64>76561198000000021</steamID64>
+<steamID64>76561198000000022</steamID64>
+<steamID64>76561198000000023</steamID64>
+<steamID64>76561198000000024</steamID64>
+<steamID64>76561198000000025</steamID64>
+</members>
+</memberList>

@@ -1,0 +1,37 @@
+[Unit]
+Description=PlayVow web (TanStack Start, Nitro server bundle)
+After=network-online.target
+Wants=network-online.target
+# If the web process keeps failing (or the healthcheck timer keeps kicking
+# it) more than 5 times in 10 minutes, give up and stay down. Pair with an
+# OnFailure= alert so a give-up doesn't become a silent outage.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/opt/playvow/shared
+EnvironmentFile=/opt/playvow/shared/.env
+# Web runs in embedded-replica mode: reads from a local synced file, writes go
+# remote via the dbWrite() split. Worker stays on DB_MODE=remote.
+Environment=DB_MODE=replica
+Environment=LOCAL_DB_PATH=file:web-replica.db
+ExecStart=/opt/playvow/current/.output/node /opt/playvow/current/.output/server/index.mjs
+Restart=on-failure
+RestartSec=2
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+ReadWritePaths=/opt/playvow/shared
+
+[Install]
+WantedBy=multi-user.target

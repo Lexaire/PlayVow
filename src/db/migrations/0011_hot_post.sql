@@ -1,0 +1,1 @@
+CREATE INDEX `giveaways_creator_ended_idx` ON `giveaways` (`creator_user_id`,`ended_at`);

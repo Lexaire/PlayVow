@@ -1,0 +1,25 @@
+{
+  "response": {
+    "game_count": 3,
+    "games": [
+      {
+        "appid": 440,
+        "name": "Team Fortress 2",
+        "playtime_forever": 5000,
+        "playtime_2weeks": 30,
+        "img_icon_url": "e3f595a92552da3d664ad00277fad2107345f743"
+      },
+      {
+        "appid": 730,
+        "name": "Counter-Strike 2",
+        "playtime_forever": 0,
+        "img_icon_url": ""
+      },
+      {
+        "appid": 220,
+        "name": "Half-Life 2",
+        "playtime_forever": 240
+      }
+    ]
+  }
+}

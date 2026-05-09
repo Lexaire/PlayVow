@@ -1,0 +1,88 @@
+---
+- name: Install Caddy reverse proxy
+  hosts: all
+  become: true
+  any_errors_fatal: true
+
+  tasks:
+    - name: Ensure prerequisite packages are present
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - rsync
+          - apt-transport-https
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Ensure /etc/apt/keyrings exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    # --- Caddy (Ubuntu universe) ---
+    - name: Install Caddy
+      ansible.builtin.apt:
+        name: caddy
+        state: present
+        update_cache: true
+
+    - name: Drop project Caddyfile in place
+      ansible.builtin.copy:
+        src: ../files/caddy/Caddyfile
+        dest: /etc/caddy/Caddyfile
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart caddy
+
+    - name: Drop Caddy environment overrides (APP_DOMAIN)
+      ansible.builtin.copy:
+        dest: /etc/caddy/Caddyfile.env
+        content: |
+          APP_DOMAIN={{ app_domain }}
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart caddy
+
+    - name: Ensure Caddy systemd drop-in dir exists
+      ansible.builtin.file:
+        path: /etc/systemd/system/caddy.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Wire env file into Caddy unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/caddy.service.d/override.conf
+        content: |
+          [Service]
+          EnvironmentFile=/etc/caddy/Caddyfile.env
+        owner: root
+        group: root
+        mode: '0644'
+      register: caddy_override
+
+    - name: Reload systemd if Caddy override changed
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: caddy_override.changed
+
+    - name: Ensure Caddy is enabled and running
+      ansible.builtin.systemd:
+        name: caddy
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart caddy
+      ansible.builtin.systemd:
+        name: caddy
+        state: restarted

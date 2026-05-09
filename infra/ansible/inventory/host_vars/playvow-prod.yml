@@ -1,0 +1,36 @@
+---
+ansible_python_interpreter: /usr/bin/python3
+
+# konstruktoid.hardening's packages_blocklist removes the rsync package by
+# default (because of the legacy rsync daemon on port 873). We use the rsync
+# CLIENT for deploys (infra/deploy.sh rsyncs the .output bundle to the VPS),
+# so we override the list verbatim minus rsync. Keep this in sync with
+# konstruktoid.hardening/defaults/main.yml's packages_blocklist when upgrading
+# the role.
+packages_blocklist:
+  - 'apport'
+  - 'autofs'
+  - 'avahi'
+  - 'beep'
+  - 'ftp'
+  - 'git'
+  - 'inetutils-telnet'
+  - 'pastebinit'
+  - 'popularity-contest'
+  - 'prelink'
+  - 'rpcbind'
+  - 'rsh'
+  - 'rsh-server'
+  # rsync intentionally omitted — required by infra/deploy.sh
+  - 'talk'
+  - 'telnet'
+  - 'telnet-server'
+  - 'tftp'
+  - 'tftpd'
+  - 'tnftp'
+  - 'tuned'
+  - 'vsftpd'
+  - 'whoopsie'
+  - 'xinetd'
+  - 'yp-tools'
+  - 'ypbind'

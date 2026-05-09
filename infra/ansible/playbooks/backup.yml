@@ -1,0 +1,108 @@
+---
+# 2-hourly snapshot of {{ app_dir }}/shared/web-replica.db (the libSQL embedded
+# replica owned by playvow-web.service) → zstd → Backblaze B2.
+#
+# One-time bucket setup (Backblaze console, must be done before B2 creds
+# get pasted into vault.yml):
+#
+#   1. Create B2 bucket `playvow-db-backups` (Private; Object Lock = Enabled;
+#      Default Retention = Compliance, 30 days). Object Lock can ONLY be set
+#      at bucket creation.
+#   2. Add a Lifecycle Rule giving a ~62-day net TTL (e.g. uploading→hiding
+#      = 61 + hiding→deleting = 1, or 31 + 31 — either works). Compliance
+#      retention (30d) expires well before lifecycle deletes, so the engine
+#      is allowed to clean up. The B2 console is the source of truth for
+#      the exact breakdown.
+#   3. Create an Application Key scoped to this bucket only. Capabilities:
+#      `listFiles`, `readFiles`, `writeFiles`. **Do NOT enable `deleteFiles`
+#      or `bypassGovernance`.** This way the on-host credential cannot issue
+#      a delete even if Object Lock somehow allowed it. Save the keyID and
+#      applicationKey into vault.yml as vault_b2_*.
+#
+# Defense in depth: Object Lock blocks deletes server-side, AND the API key
+# itself lacks the delete capability. An attacker with full VPS access can
+# upload garbage but cannot delete or overwrite existing locked versions.
+
+- name: Provision SQLite backup to Backblaze B2
+  hosts: all
+  become: true
+  any_errors_fatal: true
+
+  tasks:
+    - name: Install rclone, sqlite3, zstd
+      ansible.builtin.apt:
+        name:
+          - rclone
+          - sqlite3
+          - zstd
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Ensure backup config dir exists
+      ansible.builtin.file:
+        path: '{{ app_dir }}/shared/.backup'
+        state: directory
+        owner: '{{ deploy_user }}'
+        group: '{{ deploy_user }}'
+        mode: '0700'
+
+    - name: Drop rclone config
+      ansible.builtin.copy:
+        dest: '{{ app_dir }}/shared/.backup/rclone.conf'
+        content: |
+          [b2]
+          type = b2
+          account = {{ b2_application_key_id }}
+          key = {{ b2_application_key }}
+        owner: '{{ deploy_user }}'
+        group: '{{ deploy_user }}'
+        mode: '0600'
+      no_log: true
+
+    - name: Drop backup environment file
+      ansible.builtin.copy:
+        dest: '{{ app_dir }}/shared/.backup/backup.env'
+        content: |
+          DB_PATH={{ app_dir }}/shared/web-replica.db
+          B2_BUCKET={{ b2_bucket }}
+          RCLONE_CONFIG={{ app_dir }}/shared/.backup/rclone.conf
+          HEALTHCHECKS_URL={{ healthchecks_backup_url }}
+        owner: '{{ deploy_user }}'
+        group: '{{ deploy_user }}'
+        mode: '0600'
+
+    - name: Install backup and restore scripts
+      ansible.builtin.copy:
+        src: '../files/backup/{{ item.src }}'
+        dest: '{{ item.dest }}'
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - { src: playvow-backup.sh, dest: /usr/local/bin/playvow-backup }
+        - { src: playvow-restore.sh, dest: /usr/local/bin/playvow-restore }
+
+    - name: Install backup systemd unit and timer
+      ansible.builtin.copy:
+        src: '../files/systemd/{{ item }}'
+        dest: '/etc/systemd/system/{{ item }}'
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - playvow-backup.service
+        - playvow-backup.timer
+      register: backup_units
+
+    - name: Reload systemd if backup units changed
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: backup_units.changed
+
+    - name: Enable and start the backup timer (skipped until B2 creds are set)
+      ansible.builtin.systemd:
+        name: playvow-backup.timer
+        enabled: true
+        state: started
+      when: b2_application_key_id | length > 0

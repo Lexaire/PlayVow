@@ -1,0 +1,101 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Semantic role tokens. Use these in app code instead of raw `bg-white` /
+   `text-white` so that swapping themes flips the surface/content roles
+   without touching literal colors. `text-white` and `bg-white` always mean
+   literal white. */
+@theme {
+  --color-surface: oklch(1 0 0);
+  --color-surface-muted: oklch(0.985 0 0);
+  --color-surface-strong: oklch(0.205 0 0);
+  --color-content: oklch(0.205 0 0);
+  --color-content-muted: oklch(0.55 0 0);
+  --color-content-on-strong: oklch(1 0 0);
+  --color-border-default: oklch(0.92 0 0);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+/* Dark mode swaps the neutral/structural palette. Tailwind v4 compiles color
+   utilities to `var(--color-*)`, so redefining the tokens here flips every
+   `bg-neutral-*` / `text-neutral-*` / `bg-surface` / etc. used across the app.
+   `--color-white` and `--color-black` are intentionally NOT flipped — code
+   that needs surface flipping should use the semantic tokens above. */
+.dark {
+  color-scheme: dark;
+
+  --color-surface: oklch(0.205 0 0);
+  --color-surface-muted: oklch(0.18 0 0);
+  --color-surface-strong: oklch(0.97 0 0);
+  --color-content: oklch(0.97 0 0);
+  --color-content-muted: oklch(0.68 0 0);
+  --color-content-on-strong: oklch(0.205 0 0);
+  --color-border-default: oklch(0.285 0 0);
+
+  --color-neutral-50: oklch(0.18 0 0);
+  --color-neutral-100: oklch(0.235 0 0);
+  --color-neutral-200: oklch(0.285 0 0);
+  --color-neutral-300: oklch(0.38 0 0);
+  --color-neutral-400: oklch(0.55 0 0);
+  --color-neutral-500: oklch(0.68 0 0);
+  --color-neutral-600: oklch(0.78 0 0);
+  --color-neutral-700: oklch(0.86 0 0);
+  --color-neutral-800: oklch(0.92 0 0);
+  --color-neutral-900: oklch(0.97 0 0);
+
+  /* Status badge backgrounds (-100/-50) get darkened so they read on a
+     dark surface; their paired -800/-900 foregrounds get lightened. */
+  --color-emerald-100: oklch(0.32 0.07 160);
+  --color-emerald-600: oklch(0.78 0.15 160);
+  --color-emerald-700: oklch(0.78 0.15 160);
+  --color-emerald-800: oklch(0.85 0.13 160);
+  --color-emerald-900: oklch(0.92 0.1 160);
+
+  --color-rose-50: oklch(0.26 0.05 20);
+  --color-rose-100: oklch(0.32 0.07 20);
+  --color-rose-300: oklch(0.45 0.1 20);
+  --color-rose-700: oklch(0.78 0.14 20);
+  --color-rose-800: oklch(0.85 0.12 20);
+  --color-rose-900: oklch(0.92 0.1 20);
+
+  --color-amber-100: oklch(0.32 0.07 80);
+  --color-amber-800: oklch(0.85 0.12 80);
+  --color-amber-900: oklch(0.92 0.1 80);
+
+  --color-yellow-100: oklch(0.32 0.08 95);
+  --color-yellow-800: oklch(0.88 0.13 95);
+
+  --color-green-100: oklch(0.32 0.07 145);
+  --color-green-800: oklch(0.88 0.13 145);
+
+  --color-red-100: oklch(0.32 0.08 25);
+  --color-red-800: oklch(0.88 0.12 25);
+
+  --color-sky-100: oklch(0.32 0.07 230);
+  --color-sky-700: oklch(0.78 0.13 230);
+  --color-sky-800: oklch(0.85 0.11 230);
+  --color-sky-900: oklch(0.92 0.09 230);
+
+  --color-violet-100: oklch(0.32 0.08 290);
+  --color-violet-700: oklch(0.78 0.14 290);
+  --color-violet-800: oklch(0.85 0.12 290);
+  --color-violet-900: oklch(0.92 0.1 290);
+
+  --color-blue-100: oklch(0.32 0.08 250);
+  --color-blue-700: oklch(0.78 0.14 250);
+  --color-blue-800: oklch(0.85 0.12 250);
+}

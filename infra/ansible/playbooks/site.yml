@@ -1,0 +1,10 @@
+---
+# Full provisioning run (idempotent). Bootstrap is intentionally separate —
+# see playbooks/bootstrap.yml for the one-time root-only setup.
+#
+# Code releases are shipped by infra/deploy.sh, not by this playbook.
+
+- ansible.builtin.import_playbook: harden.yml
+- ansible.builtin.import_playbook: runtime.yml
+- ansible.builtin.import_playbook: deploy.yml
+- ansible.builtin.import_playbook: backup.yml

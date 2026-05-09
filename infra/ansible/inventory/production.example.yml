@@ -1,0 +1,14 @@
+---
+# Template — copy to production.yml (gitignored) and fill in your VPS.
+#   cp inventory/production.example.yml inventory/production.yml
+#   $EDITOR inventory/production.yml
+#
+# ansible.cfg points at inventory/production.yml, so the copy is what
+# actually gets used; this file is here only so a fresh clone documents
+# the expected shape.
+all:
+  hosts:
+    playvow-prod:
+      ansible_host: 0.0.0.0 # ← VPS public IP
+      ansible_user: '{{ deploy_user }}'
+      ansible_port: 22

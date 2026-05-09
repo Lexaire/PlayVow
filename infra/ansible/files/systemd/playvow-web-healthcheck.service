@@ -1,0 +1,13 @@
+[Unit]
+Description=PlayVow web liveness probe (restarts playvow-web after N consecutive failures)
+# Don't bother probing if the unit is already down — let normal Restart= handle that.
+ConditionPathExists=/run/systemd/system
+After=playvow-web.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/playvow-web-healthcheck.sh
+# ExecStart exits 0 when healthy OR still in grace; exits 1 only when the
+# threshold has been hit. ExecStopPost runs unconditionally and reads
+# $EXIT_STATUS to decide whether to kick the web service.
+ExecStopPost=/bin/sh -c '[ "$EXIT_STATUS" = "0" ] || /bin/systemctl restart playvow-web.service'

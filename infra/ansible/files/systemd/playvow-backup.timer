@@ -1,0 +1,10 @@
+[Unit]
+Description=PlayVow SQLite backup (every 2 hours)
+
+[Timer]
+OnCalendar=*-*-* 00/2:00:00
+Persistent=true
+Unit=playvow-backup.service
+
+[Install]
+WantedBy=timers.target

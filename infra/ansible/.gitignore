@@ -1,0 +1,9 @@
+.vault_pass
+*.retry
+roles/
+collections/
+
+# Real inventory + secrets — committed templates are *.example.yml
+inventory/production.yml
+inventory/group_vars/all/local.yml
+inventory/group_vars/all/vault.yml

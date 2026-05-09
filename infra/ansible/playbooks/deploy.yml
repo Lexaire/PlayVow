@@ -1,0 +1,119 @@
+---
+# Lays down the on-host scaffolding for releases:
+#   {{ app_dir }}/
+#   ├── current -> releases/<id>          # symlink, flipped by infra/deploy.sh
+#   ├── releases/                         # rsync target
+#   └── shared/.env                       # persisted across releases
+#
+# The actual code is shipped by infra/deploy.sh (rsync + ssh symlink flip).
+# This playbook only ensures the layout, the systemd units, and the shared env
+# file exist.
+
+- name: Provision app layout and systemd units
+  hosts: all
+  become: true
+  any_errors_fatal: true
+
+  vars:
+    playvow_units:
+      - playvow-web.service
+      - playvow-worker.service
+      - playvow-web-healthcheck.service
+      - playvow-web-healthcheck.timer
+
+  tasks:
+    - name: Ensure app directories exist
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        owner: '{{ deploy_user }}'
+        group: '{{ deploy_user }}'
+        mode: '0755'
+      loop:
+        - '{{ app_dir }}'
+        - '{{ app_dir }}/releases'
+        - '{{ app_dir }}/shared'
+
+    - name: Seed shared .env if missing (operator fills in values out-of-band)
+      ansible.builtin.copy:
+        dest: '{{ app_dir }}/shared/.env'
+        content: |
+          NODE_ENV=production
+          PORT=3000
+          # Fill in the rest manually (Turso, Steam, encryption key, etc.).
+          # See .env.example in the repo for the full list.
+        owner: '{{ deploy_user }}'
+        group: '{{ deploy_user }}'
+        mode: '0600'
+        force: false
+
+    - name: Remove legacy single-unit playvow.service if present
+      ansible.builtin.file:
+        path: /etc/systemd/system/playvow.service
+        state: absent
+      register: legacy_unit_removed
+
+    - name: Disable legacy playvow.service
+      ansible.builtin.systemd:
+        name: playvow.service
+        enabled: false
+        state: stopped
+      when: legacy_unit_removed.changed
+      failed_when: false
+
+    - name: Install playvow systemd units
+      ansible.builtin.copy:
+        src: '../files/systemd/{{ item }}'
+        dest: '/etc/systemd/system/{{ item }}'
+        owner: root
+        group: root
+        mode: '0644'
+      loop: '{{ playvow_units }}'
+      register: playvow_units_result
+
+    - name: Install playvow-web healthcheck script
+      ansible.builtin.copy:
+        src: ../files/systemd/playvow-web-healthcheck.sh
+        dest: /usr/local/bin/playvow-web-healthcheck.sh
+        owner: root
+        group: root
+        mode: '0755'
+      register: playvow_healthcheck_script
+
+    - name: Reload systemd if any unit changed
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: playvow_units_result.changed or legacy_unit_removed.changed
+
+    - name: Allow deploy user to restart playvow services without password
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/playvow-restart
+        content: |
+          {{ deploy_user }} ALL=(root) NOPASSWD: \
+            /bin/systemctl restart playvow-web.service, \
+            /bin/systemctl restart playvow-worker.service, \
+            /bin/systemctl status playvow-web.service, \
+            /bin/systemctl status playvow-worker.service, \
+            /bin/systemctl is-active playvow-web.service, \
+            /bin/systemctl is-active playvow-worker.service
+        owner: root
+        group: root
+        mode: '0440'
+        validate: 'visudo -cf %s'
+
+    - name: Enable playvow services (won't start until first release lands)
+      ansible.builtin.systemd:
+        name: '{{ item }}'
+        enabled: true
+      loop:
+        - playvow-web.service
+        - playvow-worker.service
+
+    # Healthcheck timer is the only unit we want actively running on every
+    # boot. The .service is oneshot — pulled in by the timer, not enabled
+    # standalone.
+    - name: Enable and start playvow-web healthcheck timer
+      ansible.builtin.systemd:
+        name: playvow-web-healthcheck.timer
+        enabled: true
+        state: started

@@ -1,0 +1,41 @@
+[Unit]
+Description=PlayVow SQLite backup to Backblaze B2
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+WorkingDirectory=/opt/playvow/shared
+EnvironmentFile=/opt/playvow/shared/.backup/backup.env
+ExecStart=/usr/local/bin/playvow-backup
+
+# Kill the unit if a single run takes longer than 15 minutes. With the 25%
+# CPU cap, a healthy run is ~30s idle / ~3min under load. 15min means
+# something is very wrong (DB hugely grown, B2 unreachable, hung sqlite3).
+# Timeout exit triggers the cleanup trap → healthchecks.io /fail ping.
+TimeoutStartSec=15min
+
+# Yield CPU and disk to anything else under load (soft).
+Nice=19
+CPUWeight=20
+IOSchedulingClass=idle
+IOWeight=20
+
+# Hard caps. Backup can NEVER exceed these regardless of system load.
+# 25% = a quarter of one core. With zstd -19, expect ~90s wall under cap.
+# zstd -19 uses ~80 MB; 512M is generous headroom.
+CPUQuota=25%
+MemoryMax=512M
+TasksMax=32
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true

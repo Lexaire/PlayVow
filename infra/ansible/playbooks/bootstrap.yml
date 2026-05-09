@@ -1,0 +1,52 @@
+---
+# One-time bootstrap. Run as root:
+#   ansible-playbook playbooks/bootstrap.yml -u root -e ansible_user=root
+#
+# After this completes, all subsequent plays connect as `{{ deploy_user }}`.
+
+- name: Bootstrap fresh VPS — create deploy user
+  hosts: all
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+
+  tasks:
+    - name: Ensure base packages are present
+      ansible.builtin.apt:
+        name:
+          - python3
+          - sudo
+          - ca-certificates
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create deploy group
+      ansible.builtin.group:
+        name: '{{ deploy_user }}'
+        state: present
+
+    - name: Create deploy user
+      ansible.builtin.user:
+        name: '{{ deploy_user }}'
+        group: '{{ deploy_user }}'
+        groups:
+          - sudo
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Install authorized SSH key for deploy user
+      ansible.posix.authorized_key:
+        user: '{{ deploy_user }}'
+        key: '{{ deploy_authorized_key }}'
+        state: present
+
+    - name: Grant passwordless sudo to deploy user
+      ansible.builtin.copy:
+        dest: '/etc/sudoers.d/{{ deploy_user }}'
+        content: "{{ deploy_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        mode: '0440'
+        owner: root
+        group: root
+        validate: 'visudo -cf %s'

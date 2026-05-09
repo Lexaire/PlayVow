@@ -1,0 +1,77 @@
+---
+- name: Apply security baseline (konstruktoid.hardening)
+  hosts: all
+  become: true
+  any_errors_fatal: true
+
+  tasks:
+    # Cloud images run unattended-upgrades on first boot and hold the dpkg
+    # lock for several minutes. konstruktoid's package-removal tasks shell
+    # out to `apt-get remove` directly with no lock_timeout, so they
+    # explode if we don't wait for the lock to be free.
+    - name: Wait for apt/dpkg locks to be released
+      ansible.builtin.shell: |
+        set -e
+        for f in /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock; do
+          while fuser "$f" >/dev/null 2>&1; do sleep 5; done
+        done
+      changed_when: false
+
+    - name: Import konstruktoid.hardening role
+      ansible.builtin.import_role:
+        name: konstruktoid.hardening
+
+    - name: Allow inbound TCP ports for the web stack (UFW)
+      community.general.ufw:
+        rule: allow
+        port: '{{ item }}'
+        proto: tcp
+        comment: 'playvow ansible managed'
+      loop: '{{ inbound_tcp_ports }}'
+
+    # Replace the konstruktoid blanket eth0 rate-limit (which throttled all
+    # ingress including 80/443) with a port-specific limit on SSH only.
+    - name: Remove blanket eth0 rate-limit (konstruktoid leftover)
+      community.general.ufw:
+        rule: limit
+        interface: eth0
+        direction: in
+        delete: true
+
+    - name: Drop any pre-existing plain ALLOW for SSH so LIMIT replaces it
+      community.general.ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+        delete: true
+
+    - name: Rate-limit SSH (port 22) for brute-force protection
+      community.general.ufw:
+        rule: limit
+        port: '22'
+        proto: tcp
+        comment: 'playvow ansible managed'
+
+    # Mask daemons that are pure overhead inside a VM:
+    #   - multipathd: SAN multipath; we have a single virtio disk
+    #   - fwupd: firmware updates; the hypervisor owns the hardware
+    #   - upower: battery/power management; there is no battery
+    #   - postfix: local mail delivery; we don't read root's mail.
+    #     Side effect: cron / mdadm / unattended-upgrades mail goes nowhere.
+    # Light touch — packages stay installed, services are stopped + masked
+    # so nothing can accidentally start them. Reverse with `state: started`
+    # and `masked: false` if any of these turn out to be needed.
+    - name: Mask daemons that aren't useful in a VPS
+      ansible.builtin.systemd:
+        name: '{{ item }}'
+        state: stopped
+        enabled: false
+        masked: true
+      loop:
+        - multipathd.service
+        - multipathd.socket
+        - fwupd.service
+        - fwupd-refresh.timer
+        - upower.service
+        - postfix.service
+      failed_when: false

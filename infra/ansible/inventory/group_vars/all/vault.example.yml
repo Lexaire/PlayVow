@@ -1,0 +1,21 @@
+---
+# Template — create the real, encrypted vault.yml (gitignored) with:
+#
+#   echo 'your-vault-password' > infra/ansible/.vault_pass
+#   chmod 600 infra/ansible/.vault_pass
+#   ansible-vault create infra/ansible/inventory/group_vars/all/vault.yml
+#
+# Then paste the keys below into the editor that opens, with real values.
+# vars.yml references these as `{{ vault_* }}`, so changing the names here
+# means updating vars.yml too.
+
+# Backblaze B2 application key for the backup bucket. Scope the key to a
+# single bucket with capabilities listFiles + readFiles + writeFiles
+# (NO deleteFiles, NO bypassGovernance) — Object Lock on the bucket plus
+# a delete-less key means stolen credentials still can't wipe backups.
+vault_b2_application_key_id: 'paste-key-id-here'
+vault_b2_application_key: 'paste-application-key-here'
+
+# healthchecks.io ping URL for the backup timer (dead-man's-switch).
+# Empty string disables pinging — handy for local/test runs.
+vault_healthchecks_backup_url: 'https://hc-ping.com/your-uuid-here'

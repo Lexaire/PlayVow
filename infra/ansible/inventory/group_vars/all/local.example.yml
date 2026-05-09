@@ -1,0 +1,12 @@
+---
+# Template — copy to local.yml (gitignored) and fill in.
+#   cp inventory/group_vars/all/local.example.yml inventory/group_vars/all/local.yml
+#   $EDITOR inventory/group_vars/all/local.yml
+#
+# Ansible auto-loads every YAML file in group_vars/all/, so values here merge
+# with vars.yml at runtime. Keep this file for things that shouldn't be in
+# a public repo but don't need vault encryption either.
+
+# Your SSH public key — bootstrap.yml installs this on the deploy user's
+# authorized_keys so subsequent plays can connect non-interactively.
+deploy_authorized_key: 'ssh-ed25519 AAAA... your-key-here'

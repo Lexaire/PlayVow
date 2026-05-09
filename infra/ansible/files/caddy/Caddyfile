@@ -1,0 +1,28 @@
+{$APP_DOMAIN} {
+    encode zstd gzip
+
+    # PostHog reverse proxy. Requests to playvow.com/ingest/* are forwarded
+    # to PostHog's US ingest, making the traffic look same-origin so that
+    # browser tracking-protection (Firefox ETP, Brave Shields, uBlock, …)
+    # does not block analytics on the deployed site.
+    #
+    # /ingest/static/*  and  /ingest/array/*  → us-assets.i.posthog.com
+    # everything else under /ingest/*         → us.i.posthog.com
+    @ph_assets path /ingest/static/* /ingest/array/*
+    handle @ph_assets {
+        uri strip_prefix /ingest
+        reverse_proxy https://us-assets.i.posthog.com {
+            header_up Host us-assets.i.posthog.com
+        }
+    }
+
+    handle_path /ingest/* {
+        reverse_proxy https://us.i.posthog.com {
+            header_up Host us.i.posthog.com
+        }
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:3000
+    }
+}

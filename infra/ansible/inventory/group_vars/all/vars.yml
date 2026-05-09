@@ -1,0 +1,90 @@
+---
+# Deploy user created during bootstrap and used for all subsequent runs.
+deploy_user: deploy
+
+# `deploy_authorized_key` is set in inventory/group_vars/all/local.yml
+# (gitignored). Ansible auto-loads every YAML file in group_vars/all/, so
+# splitting your SSH public key off into local.yml keeps it out of the
+# public template. See local.example.yml for the expected shape.
+
+# Public domain Caddy will issue an ACME cert for. Must point at the VPS IP.
+app_domain: playvow.com
+
+# On-host release layout root. infra/deploy.sh writes into {{ app_dir }}/releases
+# and flips {{ app_dir }}/current.
+app_dir: /opt/playvow
+
+# Inbound ports opened in UFW (in addition to konstruktoid defaults).
+# 80 = HTTP (ACME challenge + redirect), 443 = HTTPS.
+# SSH (22) is handled separately in harden.yml with `rule: limit` so brute-
+# force attempts get rate-limited without throttling normal web traffic.
+inbound_tcp_ports:
+  - 80
+  - 443
+
+# --- konstruktoid.hardening overrides ---
+
+sshd_allow_groups:
+  - sudo
+sshd_admin_net:
+  - '0.0.0.0/0' # public VPS — restrict to your IP/CIDR if you have a static one
+sshd_password_authentication: false
+sshd_permit_root_login: false
+sshd_update_moduli: true
+# Suppress the "authorized use only" SSH login banner. Empty string makes the
+# role emit `Banner none`; manage_issue:false stops it from re-templating
+# /etc/issue, /etc/issue.net, and /etc/motd on subsequent runs.
+sshd_banner: ''
+manage_issue: false
+ufw_rate_limit: false
+reboot_ubuntu: false
+
+# --- Speedups ---
+# konstruktoid's defaults run several slow-but-low-value tasks for a public
+# cloud VPS. We disable the worst offenders. Flip back to true if you have
+# a specific reason to need them.
+#
+# AIDE: builds a SHA-512 hash database of nearly every file on the system at
+# init — easily 10–30 min on a small VPS. Useful for forensic intrusion
+# detection on a long-lived machine; less so when "compromised → rebuild from
+# Ansible" is the recovery story.
+manage_aide: false
+# rkhunter: rootkit scanner with a high false-positive rate on modern Ubuntu;
+# the mirror update during the play is slow.
+manage_rkhunter: false
+# USBGuard: guards against malicious USB devices. A headless VPS has no USB
+# ports to plug anything into.
+manage_usbguard: false
+# system_upgrade: runs `apt full-upgrade` mid-play. Skip it — unattended
+# security upgrades (below) handle the security-critical subset on a timer.
+# Run `apt full-upgrade` manually during a maintenance window if you want it.
+system_upgrade: false
+# Keep unattended security upgrades on — they run async on a systemd timer,
+# not during the play, so they cost nothing here.
+# Ansible replaces dicts wholesale, so every key the role expects must be
+# present here even if we only care about overriding two of them.
+automatic_updates:
+  enabled: true
+  only_security: true
+  reboot: false
+  reboot_from_time: '2:00'
+  reboot_time_margin_mins: 20
+  custom_origins: ''
+
+# --- Backblaze B2 backup ---
+# Bucket is created out-of-band in the Backblaze console with Object Lock
+# enabled at bucket creation (compliance mode, 30-day default retention).
+# Application Key is scoped to this bucket only with capabilities listFiles +
+# readFiles + writeFiles (NO deleteFiles, NO bypassGovernance), so even
+# stolen credentials cannot issue a delete.
+# See playbooks/backup.yml for the full one-time setup checklist.
+b2_bucket: playvow-db-backups
+# Credentials live in vault.yml (vault_b2_*). The backup timer only enables
+# itself once b2_application_key_id resolves to a non-empty string.
+b2_application_key_id: '{{ vault_b2_application_key_id }}'
+b2_application_key: '{{ vault_b2_application_key }}'
+
+# healthchecks.io ping URL for the backup job (dead-man's-switch). The script
+# pings /start, the bare URL on success, /fail on any non-zero exit. Empty
+# string disables pinging — handy for local/test runs.
+healthchecks_backup_url: '{{ vault_healthchecks_backup_url }}'

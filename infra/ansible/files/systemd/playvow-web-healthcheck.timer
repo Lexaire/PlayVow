@@ -1,0 +1,16 @@
+[Unit]
+Description=PlayVow web liveness probe timer
+Requires=playvow-web.service
+
+[Timer]
+# Wait a beat after boot so the web process has a chance to bind :3000.
+OnBootSec=2min
+# Probe every 30s. With THRESHOLD=3 in the script, a true outage triggers a
+# restart after ~90s of consecutive failure — enough to ride out a slow tick
+# but short enough that a real hang doesn't go unnoticed.
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=playvow-web-healthcheck.service
+
+[Install]
+WantedBy=timers.target
