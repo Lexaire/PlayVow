@@ -3,8 +3,10 @@ import type { GroupCookieStatus } from '#/repos/groupSecrets'
 import type { JobRunRow } from '#/repos/jobRuns'
 import type { WorkerHeartbeatRow } from '#/repos/workerHeartbeats'
 
-// Heartbeat tick is every 5 min; 15 min = 3 missed ticks.
-export const HEARTBEAT_STALE_MS = 15 * 60 * 1000
+// Heartbeat tick is every 15 min; 45 min = 3 missed ticks. Keep this and
+// HEARTBEAT_INTERVAL_MS in worker/index.ts in 3:1 ratio so a single late
+// tick doesn't flip the worker to "stale".
+export const HEARTBEAT_STALE_MS = 45 * 60 * 1000
 
 // A `running` job older than 2h is almost certainly orphaned (worker died).
 export const STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000

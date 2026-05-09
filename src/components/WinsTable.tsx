@@ -89,6 +89,22 @@ export const renderAchievements = (
   )
 }
 
+export const renderScreenshots = (win: WinView): ReactNode => {
+  const count = win.screenshotCount
+  if (count === null) return <span className="text-neutral-400">—</span>
+  if (count === 0) return <span className="text-neutral-400">none</span>
+  const text = `${String(count)}`
+  const canLink = win.user.steamId !== null && win.giveaway.target.kind === 'app'
+  if (!canLink) return <span>{text}</span>
+  const appId = win.giveaway.target.kind === 'app' ? win.giveaway.target.appId : 0
+  const href = `https://steamcommunity.com/profiles/${win.user.steamId}/screenshots/?appid=${String(appId)}`
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline">
+      {text}
+    </a>
+  )
+}
+
 export const renderPlaytime = (win: WinView): ReactNode => {
   if (win.currentPlaytimeMinutes === null) return <span className="text-neutral-400">—</span>
   const totalPrecise = formatPlaytimePrecise(win.currentPlaytimeMinutes)
@@ -280,6 +296,7 @@ export function WinsTable({
               <th className="whitespace-nowrap px-3 py-0">Deadline</th>
               <th className="px-3 py-0">Playtime</th>
               <th className="whitespace-nowrap px-3 py-0">Ach.</th>
+              <th className="whitespace-nowrap px-3 py-0">Shots</th>
               {canViewModWin ? <th className="w-12 px-3 py-0">Mod</th> : null}
             </tr>
           </thead>
@@ -336,6 +353,9 @@ export function WinsTable({
                 <td className="px-3 py-0 text-neutral-700">{renderPlaytime(w)}</td>
                 <td className="whitespace-nowrap px-3 py-0 text-neutral-700">
                   {renderAchievements(w)}
+                </td>
+                <td className="whitespace-nowrap px-3 py-0 text-neutral-700">
+                  {renderScreenshots(w)}
                 </td>
                 {canViewModWin ? (
                   <td className="w-12 whitespace-nowrap px-3 py-0">
@@ -435,6 +455,9 @@ function WinCard({
         )}
         {renderPlaytime(w)}
         {renderAchievements(w)}
+        {w.screenshotCount !== null && w.screenshotCount > 0 ? (
+          <span>{renderScreenshots(w)} shots</span>
+        ) : null}
         {canViewModWin ? (
           <Link
             to="/mod/wins/$winId"

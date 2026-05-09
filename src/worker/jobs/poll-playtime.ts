@@ -9,6 +9,7 @@ import type {
   OwnedGame,
   SteamApiClient,
 } from '#/external/steam-api'
+import type { SteamCommunityClient } from '#/external/steam-community'
 import type { Logger } from '#/lib/logger'
 import type { SteamAchievement } from '#/repos/achievements'
 import {
@@ -33,6 +34,7 @@ export type PollPlaytimeDeps = {
   readonly db: Db
   readonly dbWrite: Db
   readonly steam: SteamApiClient
+  readonly steamCommunity: SteamCommunityClient
   readonly logger: Logger
   readonly now?: () => Date
   readonly pollWindowDaysAfterDeadline?: number
@@ -66,6 +68,7 @@ type WinPollResult = {
   readonly observation: boolean
   readonly missingGame: boolean
   readonly achievementsCallFailed: boolean
+  readonly screenshotsCallFailed: boolean
   readonly achievementEventsWritten: number
   readonly achievementsUpserted: number
 }
@@ -126,6 +129,7 @@ const writePlaytime = async (
   win: Win,
   game: OwnedGame | null,
   achievements: AchievementCounts,
+  screenshotCount: number | null,
   checkedAt: Date,
 ): Promise<
   { kind: 'baseline'; observationWritten: boolean } | { kind: 'progress'; changed: boolean }
@@ -134,7 +138,7 @@ const writePlaytime = async (
     currentPlaytimeMinutes: game?.playtimeMinutes ?? null,
     playtime2WeeksMinutes: game?.playtime2WeeksMinutes ?? null,
     hasReview: null,
-    screenshotCount: null,
+    screenshotCount,
     achievementsUnlocked: achievements.unlocked,
     achievementsTotal: achievements.total,
     checkedAt,
@@ -172,7 +176,21 @@ const pollOneWin = async (
     log.warn('steam_achievements_failed', { winId: win.id, error: achR.error.kind })
   }
 
-  const outcome = await writePlaytime(deps, win, game, achievements, now)
+  // Screenshots come from the public profile page (no Web API for this). We
+  // keep null as the "couldn't see" sentinel — distinct from 0 ("public, none
+  // posted"). profile_private here is the per-game screenshot tab being
+  // hidden, which is independent of overall profile visibility.
+  const ssR = await deps.steamCommunity.getScreenshotCount(ctx.steamId, ctx.appId)
+  let screenshotCount: number | null = null
+  let screenshotsCallFailed = false
+  if (ssR.ok) {
+    screenshotCount = ssR.value
+  } else if (ssR.error.kind !== 'profile_private') {
+    screenshotsCallFailed = true
+    log.warn('steam_screenshots_failed', { winId: win.id, error: ssR.error.kind })
+  }
+
+  const outcome = await writePlaytime(deps, win, game, achievements, screenshotCount, now)
 
   let achievementEventsWritten = 0
   let achievementsUpserted = 0
@@ -206,6 +224,7 @@ const pollOneWin = async (
       (outcome.kind === 'progress' && outcome.changed),
     missingGame: game === null,
     achievementsCallFailed: !achR.ok,
+    screenshotsCallFailed,
     achievementEventsWritten,
     achievementsUpserted,
   }
@@ -316,6 +335,7 @@ type Aggregate = {
   observationsWritten: number
   missingGames: number
   achievementsCallFailures: number
+  screenshotsCallFailures: number
   achievementEventsWritten: number
   achievementsUpserted: number
 }
@@ -327,6 +347,7 @@ const sumOutcomes = (outcomes: ReadonlyArray<WinPollResult>): Aggregate => {
     observationsWritten: 0,
     missingGames: 0,
     achievementsCallFailures: 0,
+    screenshotsCallFailures: 0,
     achievementEventsWritten: 0,
     achievementsUpserted: 0,
   }
@@ -336,6 +357,7 @@ const sumOutcomes = (outcomes: ReadonlyArray<WinPollResult>): Aggregate => {
     if (o.observation) a.observationsWritten += 1
     if (o.missingGame) a.missingGames += 1
     if (o.achievementsCallFailed) a.achievementsCallFailures += 1
+    if (o.screenshotsCallFailed) a.screenshotsCallFailures += 1
     a.achievementEventsWritten += o.achievementEventsWritten
     a.achievementsUpserted += o.achievementsUpserted
   }
@@ -463,9 +485,9 @@ export const pollPlaytime = async (deps: PollPlaytimeDeps): Promise<PollPlaytime
     privateProfiles,
     missingGames: a.missingGames,
     // Per-win count of any Steam call failure: getOwnedGames failures count
-    // every win in the affected user batch; achievement failures count the
-    // single win they happened on.
-    steamErrors: ownedGamesFailures + a.achievementsCallFailures,
+    // every win in the affected user batch; achievement and screenshot
+    // failures count the single win they happened on.
+    steamErrors: ownedGamesFailures + a.achievementsCallFailures + a.screenshotsCallFailures,
     skippedNoContext,
     achievementEventsWritten: a.achievementEventsWritten,
     achievementsUpserted: a.achievementsUpserted,

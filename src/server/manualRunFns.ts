@@ -247,7 +247,13 @@ export const pollOneWinFn = createServerFn({ method: 'POST' })
         cron: 'manual',
         run: async () => {
           const result = await pollSingleWin(
-            { db: dbR, dbWrite: dbWrite(), steam: deps.steam, logger },
+            {
+              db: dbR,
+              dbWrite: dbWrite(),
+              steam: deps.steam,
+              steamCommunity: deps.steamCommunity,
+              logger,
+            },
             data.winId,
           )
           captured.value = result

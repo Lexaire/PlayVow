@@ -11,8 +11,10 @@ import type {
   SteamId,
 } from '#/db/schema'
 import type { AchievementDetail, OwnedGame, OwnedGames, SteamApiClient } from '#/external/steam-api'
+import type { ScreenshotsError, SteamCommunityClient } from '#/external/steam-community'
 import { createLogger } from '#/lib/logger'
-import { ok } from '#/lib/result'
+import type { Result } from '#/lib/result'
+import { err, ok } from '#/lib/result'
 import { createTestDb } from '#/repos/__test__/db'
 import { upsertGiveaway } from '#/repos/giveaways'
 import { upsertSteamApp } from '#/repos/steamApps'
@@ -151,6 +153,20 @@ const recordingSteam = (
   return { client, calls }
 }
 
+// Default stub: every screenshot lookup returns 0 (public profile, no shots).
+// Tests that care about screenshots pass a custom screenshotsBy map.
+const stubSteamCommunity = (
+  screenshotsBy: Readonly<Record<string, Result<number, ScreenshotsError>>> = {},
+): SteamCommunityClient => ({
+  getScreenshotCount: (steamId, appId) => {
+    const key = `${steamId}:${String(appId)}`
+    return Promise.resolve(screenshotsBy[key] ?? ok(0))
+  },
+  getGroupMembersPage: () => {
+    throw new Error('getGroupMembersPage not used in this test')
+  },
+})
+
 const silentLogger = createLogger({ write: () => {} })
 
 describe('pollPlaytime', () => {
@@ -181,6 +197,7 @@ describe('pollPlaytime', () => {
       db,
       dbWrite: db,
       steam,
+      steamCommunity: stubSteamCommunity(),
       logger: silentLogger,
       now: fixedNow,
     })
@@ -204,6 +221,7 @@ describe('pollPlaytime', () => {
       db,
       dbWrite: db,
       steam,
+      steamCommunity: stubSteamCommunity(),
       logger: silentLogger,
       now: fixedNow,
     })
@@ -225,7 +243,14 @@ describe('pollPlaytime', () => {
         games: [game({ appId: APP_A, playtimeMinutes: 60 })],
       },
     })
-    await pollPlaytime({ db, dbWrite: db, steam: first, logger: silentLogger, now: fixedNow })
+    await pollPlaytime({
+      db,
+      dbWrite: db,
+      steam: first,
+      steamCommunity: stubSteamCommunity(),
+      logger: silentLogger,
+      now: fixedNow,
+    })
 
     const second = stubSteam({
       [STEAM_A]: {
@@ -237,6 +262,7 @@ describe('pollPlaytime', () => {
       db,
       dbWrite: db,
       steam: second,
+      steamCommunity: stubSteamCommunity(),
       logger: silentLogger,
       now: () => new Date('2026-04-26T00:00:00Z'),
     })
@@ -257,6 +283,7 @@ describe('pollPlaytime', () => {
       db,
       dbWrite: db,
       steam,
+      steamCommunity: stubSteamCommunity(),
       logger: silentLogger,
       now: fixedNow,
     })
@@ -270,6 +297,7 @@ describe('pollPlaytime', () => {
       db,
       dbWrite: db,
       steam,
+      steamCommunity: stubSteamCommunity(),
       logger: silentLogger,
       now: fixedNow,
     })
@@ -293,6 +321,7 @@ describe('pollPlaytime', () => {
       db,
       dbWrite: db,
       steam,
+      steamCommunity: stubSteamCommunity(),
       logger: silentLogger,
       now: fixedNow,
     })
@@ -328,6 +357,7 @@ describe('pollPlaytime', () => {
       db,
       dbWrite: db,
       steam,
+      steamCommunity: stubSteamCommunity(),
       logger: silentLogger,
       now: fixedNow,
     })
@@ -339,6 +369,7 @@ describe('pollPlaytime', () => {
       db,
       dbWrite: db,
       steam,
+      steamCommunity: stubSteamCommunity(),
       logger: silentLogger,
       now: fixedNow,
     })
@@ -436,6 +467,7 @@ describe('pollPlaytime', () => {
       db,
       dbWrite: db,
       steam: client,
+      steamCommunity: stubSteamCommunity(),
       logger: silentLogger,
       now: fixedNow,
     })
@@ -474,6 +506,7 @@ describe('pollPlaytime', () => {
       db,
       dbWrite: db,
       steam: firstSteam,
+      steamCommunity: stubSteamCommunity(),
       logger: silentLogger,
       now: fixedNow,
     })
@@ -501,6 +534,7 @@ describe('pollPlaytime', () => {
       db,
       dbWrite: db,
       steam: secondSteam,
+      steamCommunity: stubSteamCommunity(),
       logger: silentLogger,
       now: fixedNow,
     })
@@ -529,6 +563,7 @@ describe('pollPlaytime', () => {
       db,
       dbWrite: db,
       steam: unlockedSteam,
+      steamCommunity: stubSteamCommunity(),
       logger: silentLogger,
       now: fixedNow,
     })
@@ -553,9 +588,75 @@ describe('pollPlaytime', () => {
       db,
       dbWrite: db,
       steam: revokedSteam,
+      steamCommunity: stubSteamCommunity(),
       logger: silentLogger,
       now: () => new Date('2026-04-26T00:00:00Z'),
     })
     expect(summary.achievementEventsWritten).toBe(1) // the revocation
+  })
+
+  it('writes the screenshot count returned by the community scrape', async () => {
+    const f = await seed(db)
+    const steam = stubSteam({
+      [STEAM_A]: { visibility: 'public', games: [game({ appId: APP_A, playtimeMinutes: 90 })] },
+    })
+    const steamCommunity = stubSteamCommunity({
+      [`${STEAM_A}:${String(APP_A)}`]: ok(4),
+    })
+    const summary = await pollPlaytime({
+      db,
+      dbWrite: db,
+      steam,
+      steamCommunity,
+      logger: silentLogger,
+      now: fixedNow,
+    })
+    expect(summary.steamErrors).toBe(0)
+    const win = await findWinByGiveawayAndUser(db, f.winFreshGiveawayId, f.winFreshUserId)
+    expect(win?.screenshotCount).toBe(4)
+  })
+
+  it('writes null screenshot count and does not count an error when the per-game screenshot tab is private', async () => {
+    const f = await seed(db)
+    const steam = stubSteam({
+      [STEAM_A]: { visibility: 'public', games: [game({ appId: APP_A, playtimeMinutes: 90 })] },
+    })
+    const steamCommunity = stubSteamCommunity({
+      [`${STEAM_A}:${String(APP_A)}`]: err({ kind: 'profile_private' }),
+    })
+    const summary = await pollPlaytime({
+      db,
+      dbWrite: db,
+      steam,
+      steamCommunity,
+      logger: silentLogger,
+      now: fixedNow,
+    })
+    // Per-game privacy is expected, not an error condition.
+    expect(summary.steamErrors).toBe(0)
+    const win = await findWinByGiveawayAndUser(db, f.winFreshGiveawayId, f.winFreshUserId)
+    expect(win?.screenshotCount).toBeNull()
+  })
+
+  it('counts a screenshot scrape http error in steamErrors and writes null', async () => {
+    const f = await seed(db)
+    const steam = stubSteam({
+      [STEAM_A]: { visibility: 'public', games: [game({ appId: APP_A, playtimeMinutes: 90 })] },
+    })
+    const steamCommunity = stubSteamCommunity({
+      [`${STEAM_A}:${String(APP_A)}`]: err({ kind: 'network', message: 'timeout' }),
+    })
+    const summary = await pollPlaytime({
+      db,
+      dbWrite: db,
+      steam,
+      steamCommunity,
+      logger: silentLogger,
+      now: fixedNow,
+    })
+    expect(summary.steamErrors).toBe(1)
+    expect(summary.baselinesWritten).toBe(1) // the rest of the per-win pipeline still runs
+    const win = await findWinByGiveawayAndUser(db, f.winFreshGiveawayId, f.winFreshUserId)
+    expect(win?.screenshotCount).toBeNull()
   })
 })

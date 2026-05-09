@@ -25,12 +25,13 @@ const main = async (): Promise<void> => {
   }
 
   const dbi = createDbClient()
-  const { steam } = buildJobDeps(dbi, logger)
+  const { steam, steamCommunity } = buildJobDeps(dbi, logger)
 
   const summary = await pollPlaytime({
     db: dbi,
     dbWrite: dbi,
     steam,
+    steamCommunity,
     logger,
     ...(POLL_WINDOW_DAYS_OVERRIDE !== null && {
       pollWindowDaysAfterDeadline: POLL_WINDOW_DAYS_OVERRIDE,

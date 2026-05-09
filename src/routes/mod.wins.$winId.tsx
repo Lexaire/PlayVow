@@ -7,7 +7,7 @@ import { AuditEntryRow } from '#/components/AuditEntryRow'
 import { GameActivityFeed } from '#/components/GameActivityFeed'
 import { LocalDate } from '#/components/LocalDate'
 import { PlaytimeAchievementsChart } from '#/components/PlaytimeAchievementsChart'
-import { StatusBadge, renderAchievements } from '#/components/WinsTable'
+import { StatusBadge, renderAchievements, renderScreenshots } from '#/components/WinsTable'
 import { allowedActionsFrom, targetStatus } from '#/domain/win-status'
 import type { ModAction } from '#/domain/win-status'
 import {
@@ -158,6 +158,8 @@ function ModWinDetailPage() {
           <dd>{renderPlaytimeCell(win.playtime2WeeksMinutes)}</dd>
           <dt className="text-neutral-500">Achievements</dt>
           <dd>{renderAchievements(win, { showAltLinks: true })}</dd>
+          <dt className="text-neutral-500">Screenshots</dt>
+          <dd>{renderScreenshots(win)}</dd>
         </dl>
       </header>
 

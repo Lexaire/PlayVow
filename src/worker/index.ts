@@ -34,10 +34,10 @@ const cronOf = (name: string): string => {
 // changes.
 const CRON_TIMEZONE = 'America/Chicago'
 
-// Heartbeat tick. Long enough to keep Turso write volume tiny (~288/day),
-// short enough that /admin/jobs flags a dead worker within ~15 min (3 missed
-// ticks). See admin ideas.md → "Worker Heartbeat".
-const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000
+// Heartbeat tick. Long enough to keep Turso sync volume tiny (~96/day),
+// short enough that /admin/jobs flags a dead worker within ~45 min (3 missed
+// ticks per HEARTBEAT_STALE_MS). See admin ideas.md → "Worker Heartbeat".
+const HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000
 
 // Trigger-mailbox poll interval. /admin/jobs "Run now" buttons write a
 // job_triggers row; this tick drains the queue. 30s strikes the same balance
@@ -130,7 +130,7 @@ const main = async (): Promise<void> => {
     {
       name: 'poll_playtime',
       cron: cronOf('poll_playtime'),
-      run: () => pollPlaytime({ db: dbi, dbWrite: dbiWrite, steam, logger }),
+      run: () => pollPlaytime({ db: dbi, dbWrite: dbiWrite, steam, steamCommunity, logger }),
     },
     {
       name: 'scrape_steam_group_members',
