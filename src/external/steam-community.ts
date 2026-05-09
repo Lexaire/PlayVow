@@ -10,6 +10,26 @@ const STEAM_COMMUNITY_BASE = 'https://steamcommunity.com'
 
 export type ScreenshotsError = HttpError | { readonly kind: 'profile_private' }
 
+export type Screenshot = {
+  readonly fileId: string
+  readonly thumbUrl: string
+  readonly caption: string | null
+}
+
+const extractIdFromHref = (href: string): string | null => {
+  const m = /[?&]id=(\d+)/.exec(href)
+  return m?.[1] ?? null
+}
+
+// Steam paints thumbnails two ways within the same screenshots page:
+// auto-height anchors have a child <img src=...>; the rest carry the URL
+// in an inline `background-image: url('...')` on a child div. We try the
+// <img> first and fall back to the style attribute.
+const extractThumbUrlFromBackground = (style: string): string | null => {
+  const m = /background-image:\s*url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(style)
+  return m?.[1] ?? null
+}
+
 export type GroupMembersPage = {
   readonly groupId64: string
   readonly totalPages: number
@@ -21,11 +41,33 @@ export type GroupMembersError =
   | HttpError
   | { readonly kind: 'parse_failed'; readonly message: string }
 
-export const parseScreenshotCount = (html: string): Result<number, ScreenshotsError> => {
+export const parseScreenshots = (
+  html: string,
+): Result<ReadonlyArray<Screenshot>, ScreenshotsError> => {
   const $ = cheerio.load(html)
   const isPrivate = $('.profile_private_info').length > 0 || $('.error_ctn').length > 0
   if (isPrivate) return err({ kind: 'profile_private' })
-  return ok($('.profile_media_item').length)
+  // The class string `profile_media_item` also appears inside Steam's inline
+  // auto-sizing JS (twice), so a bare `.profile_media_item` selector
+  // overcounts. Anchors with a /sharedfiles/filedetails/?id= href are
+  // exactly one per real screenshot.
+  const items: Screenshot[] = []
+  $('a[href*="/sharedfiles/filedetails/?id="]').each((_i, el) => {
+    const $el = $(el)
+    const fileId = $el.attr('data-publishedfileid') ?? extractIdFromHref($el.attr('href') ?? '')
+    if (fileId === null) return
+    const imgSrc = $el.find('img').first().attr('src')
+    const bgStyle = $el.find('[style*="background-image"]').first().attr('style') ?? ''
+    const thumbUrl = imgSrc ?? extractThumbUrlFromBackground(bgStyle)
+    if (thumbUrl === null || thumbUrl.length === 0) return
+    const captionText = $el.find('q.ellipsis').first().text().trim()
+    items.push({
+      fileId,
+      thumbUrl,
+      caption: captionText.length > 0 ? captionText : null,
+    })
+  })
+  return ok(items)
 }
 
 export const parseGroupMembersPage = (xml: string): Result<GroupMembersPage, GroupMembersError> => {
@@ -46,10 +88,10 @@ export const parseGroupMembersPage = (xml: string): Result<GroupMembersPage, Gro
 }
 
 export type SteamCommunityClient = {
-  readonly getScreenshotCount: (
+  readonly getScreenshots: (
     steamId: SteamId,
     appId: SteamAppId,
-  ) => Promise<Result<number, ScreenshotsError>>
+  ) => Promise<Result<ReadonlyArray<Screenshot>, ScreenshotsError>>
   readonly getGroupMembersPage: (
     gid64: SteamGroupId,
     page: number,
@@ -67,13 +109,13 @@ export const createSteamCommunityClient = (
 ): SteamCommunityClient => {
   const fetcher = cfg.fetcher ?? defaultFetcher
   return {
-    getScreenshotCount: async (steamId, appId) => {
+    getScreenshots: async (steamId, appId) => {
       const url = `${STEAM_COMMUNITY_BASE}/profiles/${encodeURIComponent(
         steamId,
       )}/screenshots/?appid=${appId}`
       const text = await fetchText(fetcher, url)
       if (!text.ok) return text
-      return parseScreenshotCount(text.value)
+      return parseScreenshots(text.value)
     },
     getGroupMembersPage: async (gid64, page) => {
       const url = `${STEAM_COMMUNITY_BASE}/gid/${encodeURIComponent(gid64)}/memberslistxml/?xml=1&p=${page}`

@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router'
 import { useState, type ReactNode } from 'react'
 
 import {
+  CameraIcon,
   HowLongToBeatIcon,
   SteamGiftsIcon,
   SteamHuntersIcon,
@@ -296,7 +297,9 @@ export function WinsTable({
               <th className="whitespace-nowrap px-3 py-0">Deadline</th>
               <th className="px-3 py-0">Playtime</th>
               <th className="whitespace-nowrap px-3 py-0">Ach.</th>
-              <th className="whitespace-nowrap px-3 py-0">Shots</th>
+              <th className="whitespace-nowrap px-3 py-0" aria-label="Screenshots">
+                <CameraIcon />
+              </th>
               {canViewModWin ? <th className="w-12 px-3 py-0">Mod</th> : null}
             </tr>
           </thead>
@@ -456,7 +459,10 @@ function WinCard({
         {renderPlaytime(w)}
         {renderAchievements(w)}
         {w.screenshotCount !== null && w.screenshotCount > 0 ? (
-          <span>{renderScreenshots(w)} shots</span>
+          <span className="inline-flex items-center gap-1">
+            <CameraIcon />
+            {renderScreenshots(w)}
+          </span>
         ) : null}
         {canViewModWin ? (
           <Link

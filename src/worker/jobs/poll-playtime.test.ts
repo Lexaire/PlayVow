@@ -11,7 +11,11 @@ import type {
   SteamId,
 } from '#/db/schema'
 import type { AchievementDetail, OwnedGame, OwnedGames, SteamApiClient } from '#/external/steam-api'
-import type { ScreenshotsError, SteamCommunityClient } from '#/external/steam-community'
+import type {
+  Screenshot,
+  ScreenshotsError,
+  SteamCommunityClient,
+} from '#/external/steam-community'
 import { createLogger } from '#/lib/logger'
 import type { Result } from '#/lib/result'
 import { err, ok } from '#/lib/result'
@@ -153,19 +157,32 @@ const recordingSteam = (
   return { client, calls }
 }
 
-// Default stub: every screenshot lookup returns 0 (public profile, no shots).
-// Tests that care about screenshots pass a custom screenshotsBy map.
+// Default stub: every screenshot lookup returns an empty list (public
+// profile, no shots). Tests that care about screenshots pass a custom
+// screenshotsBy map.
 const stubSteamCommunity = (
-  screenshotsBy: Readonly<Record<string, Result<number, ScreenshotsError>>> = {},
+  screenshotsBy: Readonly<
+    Record<string, Result<ReadonlyArray<Screenshot>, ScreenshotsError>>
+  > = {},
 ): SteamCommunityClient => ({
-  getScreenshotCount: (steamId, appId) => {
+  getScreenshots: (steamId, appId) => {
     const key = `${steamId}:${String(appId)}`
-    return Promise.resolve(screenshotsBy[key] ?? ok(0))
+    return Promise.resolve(screenshotsBy[key] ?? ok([]))
   },
   getGroupMembersPage: () => {
     throw new Error('getGroupMembersPage not used in this test')
   },
 })
+
+// Helper: build N placeholder Screenshot rows for tests that only care about
+// the count flowing through. Real fileId/thumbUrl values aren't relevant here
+// — the parser tests in steam-community.test.ts cover that shape.
+const fakeScreenshots = (n: number): ReadonlyArray<Screenshot> =>
+  Array.from({ length: n }, (_, i) => ({
+    fileId: `${String(1000 + i)}`,
+    thumbUrl: `https://images.steamusercontent.com/ugc/${String(i)}/THUMB/`,
+    caption: null,
+  }))
 
 const silentLogger = createLogger({ write: () => {} })
 
@@ -601,7 +618,7 @@ describe('pollPlaytime', () => {
       [STEAM_A]: { visibility: 'public', games: [game({ appId: APP_A, playtimeMinutes: 90 })] },
     })
     const steamCommunity = stubSteamCommunity({
-      [`${STEAM_A}:${String(APP_A)}`]: ok(4),
+      [`${STEAM_A}:${String(APP_A)}`]: ok(fakeScreenshots(4)),
     })
     const summary = await pollPlaytime({
       db,

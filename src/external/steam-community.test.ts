@@ -7,32 +7,46 @@ import type { Fetcher } from '#/external/http'
 import {
   createSteamCommunityClient,
   parseGroupMembersPage,
-  parseScreenshotCount,
+  parseScreenshots,
 } from '#/external/steam-community'
 
 const fixture = (rel: string): string =>
   readFileSync(new URL(`./__fixtures__/${rel}`, import.meta.url), 'utf8')
 
-describe('parseScreenshotCount', () => {
-  it('counts profile_media_item tiles on a public profile', () => {
-    const r = parseScreenshotCount(fixture('steam/screenshots-public.html'))
+describe('parseScreenshots', () => {
+  it('extracts fileId, thumbUrl, and caption for each screenshot on a public profile', () => {
+    // Real (sanitized) Steam screenshots page with 4 screenshots — also
+    // contains the inline JS that mentions `profile_media_item` an extra
+    // 2 times, which would falsely inflate a naive class-name count.
+    const r = parseScreenshots(fixture('steam/screenshots-public.html'))
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.value).toBe(3)
+    expect(r.value).toHaveLength(4)
+    const first = r.value[0]
+    expect(first?.fileId).toBe('1001')
+    expect(first?.thumbUrl).toMatch(/^https:\/\/images\.steamusercontent\.com\/ugc\//)
+    expect(first?.caption).toBe('Sample caption 1')
+    // The remaining 3 had no caption in the source; the sanitizer left them
+    // empty, so they should parse as null.
+    expect(r.value[1]?.caption).toBeNull()
+    expect(r.value[2]?.caption).toBeNull()
+    expect(r.value[3]?.caption).toBeNull()
+    // fileIds are unique per screenshot and increase monotonically in the fixture.
+    expect(r.value.map((s) => s.fileId)).toEqual(['1001', '1002', '1003', '1004'])
   })
 
   it('returns profile_private for a locked profile', () => {
-    const r = parseScreenshotCount(fixture('steam/screenshots-private.html'))
+    const r = parseScreenshots(fixture('steam/screenshots-private.html'))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.kind).toBe('profile_private')
   })
 
-  it('returns 0 for a public profile with no screenshots', () => {
-    const r = parseScreenshotCount('<html><body></body></html>')
+  it('returns an empty list for a public profile with no screenshots', () => {
+    const r = parseScreenshots('<html><body></body></html>')
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.value).toBe(0)
+    expect(r.value).toEqual([])
   })
 })
 
@@ -89,10 +103,10 @@ describe('createSteamCommunityClient', () => {
       )
     }
     const client = createSteamCommunityClient({ fetcher })
-    const r = await client.getScreenshotCount('76561198000000010' as SteamId, 440 as SteamAppId)
+    const r = await client.getScreenshots('76561198000000010' as SteamId, 440 as SteamAppId)
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.value).toBe(3)
+    expect(r.value).toHaveLength(4)
     expect(seen[0]).toBe(
       'https://steamcommunity.com/profiles/76561198000000010/screenshots/?appid=440',
     )

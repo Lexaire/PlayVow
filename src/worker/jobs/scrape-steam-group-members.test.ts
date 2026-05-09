@@ -30,8 +30,8 @@ const seedGroup = async (db: Db): Promise<number> => {
 }
 
 const stubSteam = (pages: ReadonlyArray<ReadonlyArray<SteamId>>): SteamCommunityClient => ({
-  getScreenshotCount: () => {
-    throw new Error('unexpected getScreenshotCount')
+  getScreenshots: () => {
+    throw new Error('unexpected getScreenshots')
   },
   getGroupMembersPage: (_gid64, page) => {
     const idx = page - 1
@@ -111,7 +111,7 @@ describe('scrapeSteamGroupMembers', () => {
 
   it('returns empty summary when fetch fails on first page', async () => {
     const steam: SteamCommunityClient = {
-      getScreenshotCount: () => {
+      getScreenshots: () => {
         throw new Error('unexpected')
       },
       getGroupMembersPage: () =>

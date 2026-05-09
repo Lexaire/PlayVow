@@ -1,26 +1,9 @@
 import { Link, createFileRoute, notFound, redirect } from '@tanstack/react-router'
 import { z } from 'zod'
 
-import { SteamIcon } from '#/components/BrandIcons'
-import { StatusPillEditor } from '#/components/StatusPillEditor'
-
-const CameraIcon = () => (
-  <svg
-    viewBox="0 0 24 24"
-    width="14"
-    height="14"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-    <circle cx="12" cy="13" r="4" />
-  </svg>
-)
+import { CameraIcon, SteamIcon } from '#/components/BrandIcons'
 import { Pagination } from '#/components/Pagination'
+import { StatusPillEditor } from '#/components/StatusPillEditor'
 import { renderAchievements } from '#/components/WinsTable'
 import { formatPlaytimeCompact, formatPlaytimePrecise } from '#/lib/playtime'
 import { isMod } from '#/domain/roles'
@@ -105,7 +88,7 @@ function ModGroupPage() {
                   <th className="whitespace-nowrap px-3 py-2">Deadline</th>
                   <th className="px-3 py-2">Playtime</th>
                   <th className="w-28 whitespace-nowrap px-3 py-2">Status</th>
-                  <th className="w-8 px-2 py-2" title="Screenshots">
+                  <th className="w-14 px-2 py-2" title="Screenshots">
                     <span className="inline-flex" aria-label="Screenshots">
                       <CameraIcon />
                     </span>
@@ -146,6 +129,42 @@ type ModWinRow =
       ? R
       : never
     : never
+
+// Camera icon + screenshot count, linked to the user's per-game screenshots
+// page on Steam. We always render the count (0 stays "0", null becomes "—")
+// so mods can scan a list and see the signal without clicking through. The
+// link itself is informational — it goes to the user's screenshots tab even
+// when the count is 0.
+function ScreenshotCell({ w }: { readonly w: ModWinRow }) {
+  const countLabel = w.screenshotCount === null ? '—' : String(w.screenshotCount)
+  const canLink = w.user.steamId !== null && w.giveaway.target.kind === 'app'
+  const inner = (
+    <>
+      <CameraIcon />
+      <span>{countLabel}</span>
+    </>
+  )
+  if (!canLink) {
+    return (
+      <span className="inline-flex items-center gap-1 text-neutral-400" aria-label="Screenshots">
+        {inner}
+      </span>
+    )
+  }
+  const appId = w.giveaway.target.kind === 'app' ? w.giveaway.target.appId : 0
+  return (
+    <a
+      href={`https://steamcommunity.com/profiles/${w.user.steamId}/screenshots/?appid=${appId}`}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={`${w.user.steamgiftsUsername}'s screenshots for ${w.giveaway.target.name}`}
+      title="Steam screenshots"
+      className="inline-flex items-center gap-1 text-neutral-500 hover:text-neutral-800"
+    >
+      {inner}
+    </a>
+  )
+}
 
 function ModWinCard({
   w,
@@ -221,18 +240,7 @@ function ModWinCard({
           <span>—</span>
         )}
         {renderAchievements(w, { showAltLinks: true })}
-        {w.user.steamId && w.giveaway.target.kind === 'app' ? (
-          <a
-            href={`https://steamcommunity.com/profiles/${w.user.steamId}/screenshots/?appid=${w.giveaway.target.appId}`}
-            target="_blank"
-            rel="noreferrer"
-            aria-label={`${w.user.steamgiftsUsername}'s screenshots for ${w.giveaway.target.name}`}
-            title="Steam screenshots"
-            className="text-neutral-500 hover:text-neutral-800"
-          >
-            <CameraIcon />
-          </a>
-        ) : null}
+        <ScreenshotCell w={w} />
       </div>
     </li>
   )
@@ -331,21 +339,8 @@ function ModWinRow({
       <td className="w-28 whitespace-nowrap px-3 py-2">
         <StatusPillEditor winId={w.id} status={w.status} />
       </td>
-      <td className="w-8 px-2 py-2">
-        {w.user.steamId && w.giveaway.target.kind === 'app' ? (
-          <a
-            href={`https://steamcommunity.com/profiles/${w.user.steamId}/screenshots/?appid=${w.giveaway.target.appId}`}
-            target="_blank"
-            rel="noreferrer"
-            aria-label={`${w.user.steamgiftsUsername}'s screenshots for ${w.giveaway.target.name}`}
-            title="Steam screenshots"
-            className="text-neutral-500 hover:text-neutral-800"
-          >
-            <SteamIcon />
-          </a>
-        ) : (
-          <span className="text-neutral-400">—</span>
-        )}
+      <td className="w-14 whitespace-nowrap px-2 py-2">
+        <ScreenshotCell w={w} />
       </td>
     </tr>
   )
