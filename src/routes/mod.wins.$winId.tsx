@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { z } from 'zod'
 
 import { AuditEntryRow } from '#/components/AuditEntryRow'
+import { SteamGiftsIcon, SteamIcon } from '#/components/BrandIcons'
 import { GameActivityFeed } from '#/components/GameActivityFeed'
 import { LocalDate } from '#/components/LocalDate'
 import { PlaytimeAchievementsChart } from '#/components/PlaytimeAchievementsChart'
@@ -108,6 +109,11 @@ function ModWinDetailPage() {
   }
 
   const actions = allowedActionsFrom(win.status)
+  const sgUrl = `https://www.steamgifts.com/giveaway/${win.giveaway.steamgiftsCode}/`
+  const steamUrl =
+    win.giveaway.target.kind === 'app'
+      ? `https://store.steampowered.com/app/${String(win.giveaway.target.appId)}/`
+      : `https://store.steampowered.com/sub/${String(win.giveaway.target.subId)}/`
 
   return (
     <div className="space-y-6">
@@ -142,6 +148,26 @@ function ModWinDetailPage() {
           >
             Giveaway
           </Link>
+        </div>
+        <div className="flex gap-3 text-sm">
+          <a
+            href={sgUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-blue-700 hover:underline"
+          >
+            <SteamGiftsIcon />
+            SteamGifts ↗
+          </a>
+          <a
+            href={steamUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-blue-700 hover:underline"
+          >
+            <SteamIcon />
+            Steam Store ↗
+          </a>
         </div>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4">
           <dt className="text-neutral-500">Won</dt>

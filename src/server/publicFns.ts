@@ -2,19 +2,29 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 
 import { db, dbWrite } from '#/db/client'
-import type { SteamGiftsGiveawayCode, SteamGiftsUsername, SteamId } from '#/db/schema'
+import type {
+  SteamAppId,
+  SteamGiftsGiveawayCode,
+  SteamGiftsUsername,
+  SteamId,
+  SteamSubId,
+} from '#/db/schema'
 import { isMod } from '#/domain/roles'
 import { createTtlCache } from '#/lib/ttl-cache'
 import { findUserBySteamId } from '#/repos/users'
 import { getCurrentUser } from '#/server/auth'
 import {
   DEFAULT_PAGE_SIZE,
+  getGamePageData,
   getGiveawayPageData,
   getGroupOverviewPage,
+  getSubPageData,
   getUserPageDataByUsername,
   listGroupSummaries,
+  type GamePageData,
   type GiveawayPageData,
   type GroupOverviewPageData,
+  type SubPageData,
   type UserPageData,
 } from '#/server/queries'
 
@@ -139,5 +149,72 @@ export const fetchGiveawayPage = createServerFn({ method: 'GET' })
   .handler(async ({ data }) =>
     giveawayPageCache.get(`${data.slug}:${data.code}`, () =>
       getGiveawayPageData(db(), data.slug, data.code as SteamGiftsGiveawayCode),
+    ),
+  )
+
+// Game (Steam app) and sub bundle pages aggregate every win + every giveaway
+// for that target across all groups. Both lists paginate independently
+// (`winsPage` for the Wins tab, `giveawaysPage` for the Giveaways tab) so
+// switching tabs preserves the other's page position.
+const GamePageSchema = z.object({
+  appId: z.number().int().positive(),
+  winsPage: PositivePage.default(1),
+  giveawaysPage: PositivePage.default(1),
+  pageSize: z.number().int().min(1).max(200).default(DEFAULT_PAGE_SIZE),
+})
+
+const SubPageSchema = z.object({
+  subId: z.number().int().positive(),
+  winsPage: PositivePage.default(1),
+  giveawaysPage: PositivePage.default(1),
+  pageSize: z.number().int().min(1).max(200).default(DEFAULT_PAGE_SIZE),
+})
+
+const gamePageCache = createTtlCache<string, GamePageData | null>(PUBLIC_TTL_MS)
+const subPageCache = createTtlCache<string, SubPageData | null>(PUBLIC_TTL_MS)
+
+export const fetchGamePage = createServerFn({ method: 'GET' })
+  .inputValidator(
+    (input: {
+      appId: number
+      winsPage?: number | undefined
+      giveawaysPage?: number | undefined
+      pageSize?: number | undefined
+    }) => GamePageSchema.parse(input),
+  )
+  .handler(async ({ data }) =>
+    gamePageCache.get(
+      `${String(data.appId)}:${String(data.winsPage)}:${String(data.giveawaysPage)}:${String(data.pageSize)}`,
+      () =>
+        getGamePageData(
+          db(),
+          data.appId as SteamAppId,
+          data.winsPage,
+          data.giveawaysPage,
+          data.pageSize,
+        ),
+    ),
+  )
+
+export const fetchSubPage = createServerFn({ method: 'GET' })
+  .inputValidator(
+    (input: {
+      subId: number
+      winsPage?: number | undefined
+      giveawaysPage?: number | undefined
+      pageSize?: number | undefined
+    }) => SubPageSchema.parse(input),
+  )
+  .handler(async ({ data }) =>
+    subPageCache.get(
+      `${String(data.subId)}:${String(data.winsPage)}:${String(data.giveawaysPage)}:${String(data.pageSize)}`,
+      () =>
+        getSubPageData(
+          db(),
+          data.subId as SteamSubId,
+          data.winsPage,
+          data.giveawaysPage,
+          data.pageSize,
+        ),
     ),
   )

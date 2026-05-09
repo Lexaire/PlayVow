@@ -2,7 +2,14 @@ import { and, asc, count, desc, eq, gt, inArray, lt, sql, sum } from 'drizzle-or
 import { alias } from 'drizzle-orm/sqlite-core'
 
 import type { DbOrTx } from '#/db/client'
-import type { SteamGiftsGiveawayCode, SteamGiftsUsername, SteamId, WinStatus } from '#/db/schema'
+import type {
+  SteamAppId,
+  SteamGiftsGiveawayCode,
+  SteamGiftsUsername,
+  SteamId,
+  SteamSubId,
+  WinStatus,
+} from '#/db/schema'
 import {
   achievementEvents,
   giveaways,
@@ -17,6 +24,8 @@ import {
 } from '#/db/schema'
 import { listAuditEntriesForTarget } from '#/repos/auditLog'
 import type { AuditEntry, AuditEntryReadError } from '#/repos/auditLog'
+import { findSteamAppById, type SteamApp } from '#/repos/steamApps'
+import { findSteamSubById, type SteamSub } from '#/repos/steamSubs'
 import {
   batchGetOpenMembershipSteamIds,
   findUserGroupsWithOpenMembership,
@@ -267,6 +276,21 @@ export type GiveawayPageData = {
     readonly creator: GiveawayCreatorSummary
   }
   readonly wins: ReadonlyArray<WinView>
+}
+
+// Game pages aggregate every win and every giveaway for a single Steam app
+// (or sub bundle) across all groups. Both lists paginate independently with
+// `winsPage` / `giveawaysPage` query params on the route.
+export type GamePageData = {
+  readonly app: SteamApp
+  readonly wins: Page<WinView>
+  readonly giveaways: Page<UserCreatedGiveawayView>
+}
+
+export type SubPageData = {
+  readonly sub: SteamSub
+  readonly wins: Page<WinView>
+  readonly giveaways: Page<UserCreatedGiveawayView>
 }
 
 export const listGroupSummaries = async (db: DbOrTx): Promise<ReadonlyArray<GroupSummary>> => {
@@ -896,4 +920,125 @@ export const getGiveawayPageData = async (
     },
     wins: winRows.map(toWinView),
   }
+}
+
+// Cross-group "wins for this Steam app/sub" page. Mirrors selectWinJoin's
+// shape but filters by the giveaway's target. One round-trip pulls the rows;
+// a second pulls the unfiltered total so pagination can show "showing
+// 51–100 of 248" the same way every other paged list does.
+const listWinsForGiveawayWhere = async (
+  db: DbOrTx,
+  whereExpr: ReturnType<typeof eq>,
+  page: number,
+  pageSize: number,
+): Promise<Page<WinView>> => {
+  const [rows, totalRow] = await Promise.all([
+    selectWinJoin(db)
+      .where(whereExpr)
+      .orderBy(desc(wins.wonAt))
+      .limit(pageSize)
+      .offset(toOffset(page, pageSize)),
+    db
+      .select({ n: count() })
+      .from(wins)
+      .innerJoin(giveaways, eq(giveaways.id, wins.giveawayId))
+      .where(whereExpr),
+  ])
+  return {
+    rows: rows.map(toWinView),
+    total: totalRow[0]?.n ?? 0,
+    page,
+    pageSize,
+  }
+}
+
+// Cross-group giveaway list filtered by target. winnerCount uses a
+// correlated subquery instead of a LEFT JOIN + GROUP BY because the
+// outer SELECT already pulls every column of `giveaways` plus joins to
+// groups/apps/subs/creators, so a GROUP BY would have to repeat every
+// non-aggregated column. The subquery is indexed (wins.giveawayId is
+// the FK).
+const listGiveawaysForGiveawayWhere = async (
+  db: DbOrTx,
+  whereExpr: ReturnType<typeof eq>,
+  page: number,
+  pageSize: number,
+): Promise<Page<UserCreatedGiveawayView>> => {
+  const creators = alias(users, 'cross_target_creators')
+  const winnerCountSql = sql<number>`(SELECT COUNT(*) FROM ${wins} WHERE ${wins.giveawayId} = ${giveaways.id})`
+  const [rows, totalRow] = await Promise.all([
+    db
+      .select({
+        giveaway: giveaways,
+        group: { slug: groups.slug, name: groups.name },
+        app: steamApps,
+        sub: steamSubs,
+        creator: creators,
+        winnerCount: winnerCountSql,
+      })
+      .from(giveaways)
+      .innerJoin(groups, eq(groups.id, giveaways.groupId))
+      .leftJoin(steamApps, eq(steamApps.appId, giveaways.steamAppId))
+      .leftJoin(steamSubs, eq(steamSubs.subId, giveaways.steamSubId))
+      .innerJoin(creators, eq(creators.id, giveaways.creatorUserId))
+      .where(whereExpr)
+      .orderBy(desc(giveaways.endedAt))
+      .limit(pageSize)
+      .offset(toOffset(page, pageSize)),
+    db.select({ n: count() }).from(giveaways).where(whereExpr),
+  ])
+  return {
+    rows: rows.map((r) => ({
+      id: r.giveaway.id,
+      steamgiftsCode: r.giveaway.steamgiftsCode,
+      target: buildTarget(r.app, r.sub),
+      quantity: r.giveaway.quantity,
+      startedAt: r.giveaway.startedAt,
+      endedAt: r.giveaway.endedAt,
+      winnersScrapedAt: r.giveaway.winnersScrapedAt,
+      winnerCount: r.winnerCount,
+      creator: {
+        id: r.creator.id,
+        steamgiftsUsername: requireSgUsername(r.creator),
+        steamId: r.creator.steamId,
+        avatarUrl: r.creator.avatarUrl,
+      },
+      group: r.group,
+    })),
+    total: totalRow[0]?.n ?? 0,
+    page,
+    pageSize,
+  }
+}
+
+export const getGamePageData = async (
+  db: DbOrTx,
+  appId: SteamAppId,
+  winsPage: number,
+  giveawaysPage: number,
+  pageSize: number,
+): Promise<GamePageData | null> => {
+  const app = await findSteamAppById(db, appId)
+  if (!app) return null
+  const [winsPageData, giveawaysPageData] = await Promise.all([
+    listWinsForGiveawayWhere(db, eq(giveaways.steamAppId, appId), winsPage, pageSize),
+    listGiveawaysForGiveawayWhere(db, eq(giveaways.steamAppId, appId), giveawaysPage, pageSize),
+  ])
+  return { app, wins: winsPageData, giveaways: giveawaysPageData }
+}
+
+export const getSubPageData = async (
+  db: DbOrTx,
+  subId: SteamSubId,
+  winsPage: number,
+  giveawaysPage: number,
+  pageSize: number,
+): Promise<SubPageData | null> => {
+  const sub = await findSteamSubById(db, subId)
+  if (!sub) return null
+  const [winsPageData, giveawaysPageData] = await Promise.all([
+    listWinsForGiveawayWhere(db, eq(giveaways.steamSubId, subId), winsPage, pageSize),
+    listGiveawaysForGiveawayWhere(db, eq(giveaways.steamSubId, subId), giveawaysPage, pageSize),
+  ])
+  return { sub, wins: winsPageData, giveaways: giveawaysPageData }
 }

@@ -77,7 +77,7 @@ function GiveawayPage() {
           <dt className="text-neutral-500">Winners</dt>
           <dd>{hasEnded ? wins.length : '—'}</dd>
         </dl>
-        <div className="flex gap-3 text-sm">
+        <div className="flex flex-wrap gap-3 text-sm">
           <a
             href={sgUrl}
             target="_blank"
@@ -96,6 +96,23 @@ function GiveawayPage() {
             <SteamIcon />
             Steam Store ↗
           </a>
+          {giveaway.target.kind === 'app' ? (
+            <Link
+              to="/app/$appId"
+              params={{ appId: String(giveaway.target.appId) }}
+              className="text-blue-700 hover:underline"
+            >
+              Similar giveaways
+            </Link>
+          ) : (
+            <Link
+              to="/sub/$subId"
+              params={{ subId: String(giveaway.target.subId) }}
+              className="text-blue-700 hover:underline"
+            >
+              Similar giveaways
+            </Link>
+          )}
         </div>
       </header>
       <section className="space-y-2">

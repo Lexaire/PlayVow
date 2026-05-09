@@ -16,7 +16,9 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ModIndexRouteImport } from './routes/mod.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as UUsernameRouteImport } from './routes/u.$username'
+import { Route as SubSubIdRouteImport } from './routes/sub.$subId'
 import { Route as ModAuditRouteImport } from './routes/mod.audit'
+import { Route as AppAppIdRouteImport } from './routes/app.$appId'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as AdminJobsRouteImport } from './routes/admin.jobs'
 import { Route as AdminCookiesRouteImport } from './routes/admin.cookies'
@@ -66,9 +68,19 @@ const UUsernameRoute = UUsernameRouteImport.update({
   path: '/u/$username',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SubSubIdRoute = SubSubIdRouteImport.update({
+  id: '/sub/$subId',
+  path: '/sub/$subId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ModAuditRoute = ModAuditRouteImport.update({
   id: '/mod/audit',
   path: '/mod/audit',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppAppIdRoute = AppAppIdRouteImport.update({
+  id: '/app/$appId',
+  path: '/app/$appId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminUsersRoute = AdminUsersRouteImport.update({
@@ -145,7 +157,9 @@ export interface FileRoutesByFullPath {
   '/admin/cookies': typeof AdminCookiesRoute
   '/admin/jobs': typeof AdminJobsRoute
   '/admin/users': typeof AdminUsersRouteWithChildren
+  '/app/$appId': typeof AppAppIdRoute
   '/mod/audit': typeof ModAuditRoute
+  '/sub/$subId': typeof SubSubIdRoute
   '/u/$username': typeof UUsernameRoute
   '/admin/': typeof AdminIndexRoute
   '/mod/': typeof ModIndexRoute
@@ -168,7 +182,9 @@ export interface FileRoutesByTo {
   '/admin/cookies': typeof AdminCookiesRoute
   '/admin/jobs': typeof AdminJobsRoute
   '/admin/users': typeof AdminUsersRouteWithChildren
+  '/app/$appId': typeof AppAppIdRoute
   '/mod/audit': typeof ModAuditRoute
+  '/sub/$subId': typeof SubSubIdRoute
   '/u/$username': typeof UUsernameRoute
   '/admin': typeof AdminIndexRoute
   '/mod': typeof ModIndexRoute
@@ -192,7 +208,9 @@ export interface FileRoutesById {
   '/admin/cookies': typeof AdminCookiesRoute
   '/admin/jobs': typeof AdminJobsRoute
   '/admin/users': typeof AdminUsersRouteWithChildren
+  '/app/$appId': typeof AppAppIdRoute
   '/mod/audit': typeof ModAuditRoute
+  '/sub/$subId': typeof SubSubIdRoute
   '/u/$username': typeof UUsernameRoute
   '/admin/': typeof AdminIndexRoute
   '/mod/': typeof ModIndexRoute
@@ -217,7 +235,9 @@ export interface FileRouteTypes {
     | '/admin/cookies'
     | '/admin/jobs'
     | '/admin/users'
+    | '/app/$appId'
     | '/mod/audit'
+    | '/sub/$subId'
     | '/u/$username'
     | '/admin/'
     | '/mod/'
@@ -240,7 +260,9 @@ export interface FileRouteTypes {
     | '/admin/cookies'
     | '/admin/jobs'
     | '/admin/users'
+    | '/app/$appId'
     | '/mod/audit'
+    | '/sub/$subId'
     | '/u/$username'
     | '/admin'
     | '/mod'
@@ -263,7 +285,9 @@ export interface FileRouteTypes {
     | '/admin/cookies'
     | '/admin/jobs'
     | '/admin/users'
+    | '/app/$appId'
     | '/mod/audit'
+    | '/sub/$subId'
     | '/u/$username'
     | '/admin/'
     | '/mod/'
@@ -287,7 +311,9 @@ export interface RootRouteChildren {
   AdminCookiesRoute: typeof AdminCookiesRoute
   AdminJobsRoute: typeof AdminJobsRoute
   AdminUsersRoute: typeof AdminUsersRouteWithChildren
+  AppAppIdRoute: typeof AppAppIdRoute
   ModAuditRoute: typeof ModAuditRoute
+  SubSubIdRoute: typeof SubSubIdRoute
   UUsernameRoute: typeof UUsernameRoute
   AdminIndexRoute: typeof AdminIndexRoute
   ModIndexRoute: typeof ModIndexRoute
@@ -353,11 +379,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UUsernameRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/sub/$subId': {
+      id: '/sub/$subId'
+      path: '/sub/$subId'
+      fullPath: '/sub/$subId'
+      preLoaderRoute: typeof SubSubIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/mod/audit': {
       id: '/mod/audit'
       path: '/mod/audit'
       fullPath: '/mod/audit'
       preLoaderRoute: typeof ModAuditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/$appId': {
+      id: '/app/$appId'
+      path: '/app/$appId'
+      fullPath: '/app/$appId'
+      preLoaderRoute: typeof AppAppIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/users': {
@@ -474,7 +514,9 @@ const rootRouteChildren: RootRouteChildren = {
   AdminCookiesRoute: AdminCookiesRoute,
   AdminJobsRoute: AdminJobsRoute,
   AdminUsersRoute: AdminUsersRouteWithChildren,
+  AppAppIdRoute: AppAppIdRoute,
   ModAuditRoute: ModAuditRoute,
+  SubSubIdRoute: SubSubIdRoute,
   UUsernameRoute: UUsernameRoute,
   AdminIndexRoute: AdminIndexRoute,
   ModIndexRoute: ModIndexRoute,
