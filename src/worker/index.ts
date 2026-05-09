@@ -8,6 +8,7 @@ import { buildJobDeps } from '#/worker/build-deps'
 import { findJobInCatalogue } from '#/worker/job-catalogue'
 import { backfillWinners } from '#/worker/jobs/backfill-winners'
 import { pollPlaytime } from '#/worker/jobs/poll-playtime'
+import { refreshAppAchievementPercentsJob } from '#/worker/jobs/refresh-app-achievement-percents'
 import { scrapeAllGroups } from '#/worker/jobs/scrape-group'
 import { scrapeAllSteamGroupMembers } from '#/worker/jobs/scrape-steam-group-members'
 import type { ScheduledJob } from '#/worker/scheduler'
@@ -140,6 +141,17 @@ const main = async (): Promise<void> => {
           db: dbi,
           dbWrite: dbiWrite,
           steam: steamCommunity,
+          logger,
+        }),
+    },
+    {
+      name: 'refresh_app_achievement_percents',
+      cron: cronOf('refresh_app_achievement_percents'),
+      run: () =>
+        refreshAppAchievementPercentsJob({
+          db: dbi,
+          dbWrite: dbiWrite,
+          steam,
           logger,
         }),
     },

@@ -6,6 +6,7 @@ import type { SteamAppId, SteamId } from '#/db/schema'
 import type { Fetcher } from '#/external/http'
 import {
   createSteamApiClient,
+  parseGlobalAchievementPercents,
   parseOwnedGames,
   parsePlayerAchievements,
 } from '#/external/steam-api'
@@ -110,6 +111,39 @@ describe('parsePlayerAchievements', () => {
   })
 })
 
+describe('parseGlobalAchievementPercents', () => {
+  it('parses real Steam response and coerces stringified percent to number', () => {
+    const r = parseGlobalAchievementPercents(
+      fixtureJson('steam/global-achievement-percents.json'),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toHaveLength(8)
+    // First entry from HL2 in the fixture happens to be the most-common one.
+    expect(r.value[0]).toEqual({ apiname: 'HL2_ESCAPE_APARTMENTRAID', percent: 70.4 })
+    // Validates string→number coercion across the full list — every entry
+    // in the real Steam response comes back as a stringified float.
+    for (const a of r.value) {
+      expect(typeof a.percent).toBe('number')
+      expect(Number.isFinite(a.percent)).toBe(true)
+    }
+  })
+
+  it('returns an empty list when the achievements array is missing', () => {
+    const r = parseGlobalAchievementPercents({ achievementpercentages: {} })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual([])
+  })
+
+  it('returns invalid_shape on malformed input', () => {
+    const r = parseGlobalAchievementPercents({ wrong: 'shape' })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.kind).toBe('invalid_shape')
+  })
+})
+
 const okJson = (body: unknown): Response => new Response(JSON.stringify(body), { status: 200 })
 
 describe('createSteamApiClient', () => {
@@ -160,5 +194,43 @@ describe('createSteamApiClient', () => {
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.kind).toBe('network')
+  })
+
+  it('getGlobalAchievementPercents hits the public endpoint without an api key arg and parses the response', async () => {
+    const seen: string[] = []
+    const fetcher: Fetcher = (url) => {
+      seen.push(url)
+      return Promise.resolve(
+        new Response(fixture('steam/global-achievement-percents.json'), { status: 200 }),
+      )
+    }
+    const client = createSteamApiClient({ apiKey: 'KEY', fetcher })
+    const r = await client.getGlobalAchievementPercents(220 as SteamAppId)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toHaveLength(8)
+    expect(seen[0]).toContain('GetGlobalAchievementPercentagesForApp')
+    expect(seen[0]).toContain('gameid=220')
+    // Public endpoint — Steam doesn't require a key, and we deliberately
+    // don't send one (the param is just noise on the wire).
+    expect(seen[0]).not.toContain('key=')
+  })
+
+  it('getGlobalAchievementPercents treats HTTP 403 as ok([]) — Steam returns 403 for apps with no achievements', async () => {
+    const fetcher: Fetcher = () => Promise.resolve(new Response('{}', { status: 403 }))
+    const client = createSteamApiClient({ apiKey: 'KEY', fetcher })
+    const r = await client.getGlobalAchievementPercents(70 as SteamAppId)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual([])
+  })
+
+  it('getGlobalAchievementPercents surfaces non-403 http errors', async () => {
+    const fetcher: Fetcher = () => Promise.resolve(new Response('boom', { status: 500 }))
+    const client = createSteamApiClient({ apiKey: 'KEY', fetcher })
+    const r = await client.getGlobalAchievementPercents(220 as SteamAppId)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.kind).toBe('http_status')
   })
 })

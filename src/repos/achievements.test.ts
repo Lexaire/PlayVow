@@ -1,7 +1,8 @@
+import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Db } from '#/db/client'
-import { groups } from '#/db/schema'
+import { groups, steamAchievements } from '#/db/schema'
 import type {
   SteamAppId,
   SteamGiftsGiveawayCode,
@@ -12,6 +13,8 @@ import type {
 } from '#/db/schema'
 import {
   findLatestAchievementEvent,
+  getCommonAchievementProgress,
+  getCommonAchievementProgressBatch,
   listAchievementEventsByWin,
   recordAchievementStateIfChanged,
   upsertSteamAchievement,
@@ -260,5 +263,185 @@ describe('recordAchievementStateIfChanged', () => {
     })
     expect(latest?.achieved).toBe(true)
     expect(latest?.unlockedAt).toBeNull()
+  })
+})
+
+describe('getCommonAchievementProgress', () => {
+  let db: Db
+  let close: () => void
+  beforeEach(async () => {
+    const t = await createTestDb()
+    db = t.db
+    close = t.close
+  })
+  afterEach(() => {
+    close()
+  })
+
+  it('returns no_achievements when the app has zero achievement rows', async () => {
+    const f = await seed(db)
+    // The seed creates ACH_1; remove it so the app is achievement-less.
+    await db
+      .delete(steamAchievements)
+      .where(eq(steamAchievements.id, f.achievementId))
+    const r = await getCommonAchievementProgress(db, { winId: f.winId, threshold: 50 })
+    expect(r.status).toBe('no_achievements')
+  })
+
+  it('returns no_percent_data when achievements exist but none have been refreshed', async () => {
+    const f = await seed(db)
+    // Seed creates ACH_1 with percent_refreshed_at = null (default).
+    const r = await getCommonAchievementProgress(db, { winId: f.winId, threshold: 50 })
+    expect(r.status).toBe('no_percent_data')
+  })
+
+  it('counts only common achievements (>= threshold) and uses the latest event per achievement', async () => {
+    const f = await seed(db)
+    // Add two more achievements: one above threshold, one below.
+    const aboveThreshold = await upsertSteamAchievement(db, {
+      appId: APP_A,
+      apiname: 'ACH_COMMON',
+      displayName: null,
+      description: null,
+      lastSyncedAt: NOW,
+    })
+    const belowThreshold = await upsertSteamAchievement(db, {
+      appId: APP_A,
+      apiname: 'ACH_RARE',
+      displayName: null,
+      description: null,
+      lastSyncedAt: NOW,
+    })
+    // Mark all three as refreshed; set percentages so two are common.
+    await db
+      .update(steamAchievements)
+      .set({ globalPercent: 80, percentRefreshedAt: NOW })
+      .where(eq(steamAchievements.id, f.achievementId))
+    await db
+      .update(steamAchievements)
+      .set({ globalPercent: 65, percentRefreshedAt: NOW })
+      .where(eq(steamAchievements.id, aboveThreshold.id))
+    await db
+      .update(steamAchievements)
+      .set({ globalPercent: 12, percentRefreshedAt: NOW })
+      .where(eq(steamAchievements.id, belowThreshold.id))
+
+    // Unlock ACH_1 (common, 80%) and ACH_RARE (below threshold, ignored).
+    await recordAchievementStateIfChanged(db, {
+      userId: f.userId,
+      achievementId: f.achievementId,
+      winId: f.winId,
+      achieved: true,
+      unlockedAt: NOW,
+      observedAt: NOW,
+    })
+    await recordAchievementStateIfChanged(db, {
+      userId: f.userId,
+      achievementId: belowThreshold.id,
+      winId: f.winId,
+      achieved: true,
+      unlockedAt: NOW,
+      observedAt: NOW,
+    })
+
+    const r = await getCommonAchievementProgress(db, { winId: f.winId, threshold: 50 })
+    expect(r.status).toBe('computed')
+    if (r.status !== 'computed') return
+    expect(r.threshold).toBe(50)
+    expect(r.total).toBe(2) // ACH_1 + ACH_COMMON, ACH_RARE excluded
+    expect(r.unlocked).toBe(1) // only ACH_1 was unlocked among the common ones
+  })
+
+  it('a revoked achievement does not count toward unlocked', async () => {
+    const f = await seed(db)
+    await db
+      .update(steamAchievements)
+      .set({ globalPercent: 90, percentRefreshedAt: NOW })
+      .where(eq(steamAchievements.id, f.achievementId))
+
+    // Unlock then revoke (Steam can revoke achievements; the latest event
+    // wins).
+    await recordAchievementStateIfChanged(db, {
+      userId: f.userId,
+      achievementId: f.achievementId,
+      winId: f.winId,
+      achieved: true,
+      unlockedAt: NOW,
+      observedAt: NOW,
+    })
+    await recordAchievementStateIfChanged(db, {
+      userId: f.userId,
+      achievementId: f.achievementId,
+      winId: f.winId,
+      achieved: false,
+      unlockedAt: null,
+      observedAt: new Date(NOW.getTime() + 60_000),
+    })
+
+    const r = await getCommonAchievementProgress(db, { winId: f.winId, threshold: 50 })
+    expect(r.status).toBe('computed')
+    if (r.status !== 'computed') return
+    expect(r.total).toBe(1)
+    expect(r.unlocked).toBe(0)
+  })
+
+  it('returns total=0 when no achievements meet the threshold (still computed)', async () => {
+    const f = await seed(db)
+    // Refreshed but below threshold.
+    await db
+      .update(steamAchievements)
+      .set({ globalPercent: 10, percentRefreshedAt: NOW })
+      .where(eq(steamAchievements.id, f.achievementId))
+    const r = await getCommonAchievementProgress(db, { winId: f.winId, threshold: 50 })
+    expect(r.status).toBe('computed')
+    if (r.status !== 'computed') return
+    expect(r.total).toBe(0)
+    expect(r.unlocked).toBe(0)
+  })
+})
+
+describe('getCommonAchievementProgressBatch', () => {
+  let db: Db
+  let close: () => void
+  beforeEach(async () => {
+    const t = await createTestDb()
+    db = t.db
+    close = t.close
+  })
+  afterEach(() => {
+    close()
+  })
+
+  it('returns an empty map when given no winIds', async () => {
+    const r = await getCommonAchievementProgressBatch(db, { winIds: [], threshold: 50 })
+    expect(r.size).toBe(0)
+  })
+
+  it('produces the same result per win as the single-win helper', async () => {
+    const f = await seed(db)
+    // Mark the seeded achievement as common and unlock it.
+    await db
+      .update(steamAchievements)
+      .set({ globalPercent: 80, percentRefreshedAt: NOW })
+      .where(eq(steamAchievements.id, f.achievementId))
+    await recordAchievementStateIfChanged(db, {
+      userId: f.userId,
+      achievementId: f.achievementId,
+      winId: f.winId,
+      achieved: true,
+      unlockedAt: NOW,
+      observedAt: NOW,
+    })
+
+    const single = await getCommonAchievementProgress(db, {
+      winId: f.winId,
+      threshold: 50,
+    })
+    const batch = await getCommonAchievementProgressBatch(db, {
+      winIds: [f.winId],
+      threshold: 50,
+    })
+    // Same shape for the same input — batch is purely an optimization.
+    expect(batch.get(f.winId)).toEqual(single)
   })
 })

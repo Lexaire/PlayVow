@@ -53,6 +53,7 @@ const SCRAPE_GROUPS_JOB = 'scrape_groups'
 const BACKFILL_WINNERS_JOB = 'backfill_winners'
 const POLL_PLAYTIME_JOB = 'poll_playtime'
 const SCRAPE_STEAM_MEMBERS_JOB = 'scrape_steam_group_members'
+const REFRESH_APP_ACHIEVEMENT_PERCENTS_JOB = 'refresh_app_achievement_percents'
 const SYNC_APP_DETAILS_JOB = 'sync_app_details'
 
 export type ManualRunBusy = { readonly kind: 'busy'; readonly jobName: string }
@@ -369,3 +370,27 @@ export const runScrapeSteamMembersFn = createServerFn({ method: 'POST' })
     })
     return ok({ queued: true })
   })
+
+// ----- Refresh app achievement community percentages ---------------------
+
+export type RunRefreshAppAchievementPercentsInput = Record<string, never>
+export type RunRefreshAppAchievementPercentsOk = { readonly queued: true }
+export type RunRefreshAppAchievementPercentsError = ManualRunBusy
+
+export const runRefreshAppAchievementPercentsFn = createServerFn({ method: 'POST' })
+  .inputValidator((_: RunRefreshAppAchievementPercentsInput) => z.object({}).parse({}))
+  .handler(
+    async (): Promise<
+      Result<RunRefreshAppAchievementPercentsOk, RunRefreshAppAchievementPercentsError>
+    > => {
+      const admin = await requireAdmin()
+      if (await isBusy(REFRESH_APP_ACHIEVEMENT_PERCENTS_JOB, new Date())) {
+        return err({ kind: 'busy', jobName: REFRESH_APP_ACHIEVEMENT_PERCENTS_JOB })
+      }
+      await enqueueJobTrigger(dbWrite(), {
+        jobName: REFRESH_APP_ACHIEVEMENT_PERCENTS_JOB,
+        requestedByUserId: admin.id,
+      })
+      return ok({ queued: true })
+    },
+  )

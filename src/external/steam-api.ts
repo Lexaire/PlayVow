@@ -119,6 +119,26 @@ const PlayerAchievementsResponseSchema = z.object({
   ]),
 })
 
+// `percent` comes back from Steam as a stringified float (e.g. "50.0", "3.2").
+// Coerce at the schema boundary so callers see a number.
+const RawGlobalAchievementSchema = z.object({
+  name: z.string(),
+  percent: z.coerce.number(),
+})
+
+// `achievementpercentages.achievements` is also optional and absent for some
+// games — treat the missing key as "no achievements" (same as empty array).
+const GlobalAchievementPercentsResponseSchema = z.object({
+  achievementpercentages: z.object({
+    achievements: z.array(RawGlobalAchievementSchema).optional(),
+  }),
+})
+
+export type GlobalAchievementPercent = {
+  readonly apiname: string
+  readonly percent: number
+}
+
 export type OwnedGame = {
   readonly appId: SteamAppId
   readonly playtimeMinutes: number
@@ -250,6 +270,17 @@ export const parsePlayerAchievements = (
     description: a.description ?? null,
   }))
   return ok({ kind: 'public', achievements })
+}
+
+export const parseGlobalAchievementPercents = (
+  raw: unknown,
+): Result<ReadonlyArray<GlobalAchievementPercent>, SteamApiError> => {
+  const parsed = GlobalAchievementPercentsResponseSchema.safeParse(raw)
+  if (!parsed.success) {
+    return err({ kind: 'invalid_shape', issues: zodIssues(parsed.error) })
+  }
+  const list = parsed.data.achievementpercentages.achievements ?? []
+  return ok(list.map((a) => ({ apiname: a.name, percent: a.percent })))
 }
 
 const ITEM_TYPE_APP = 0
@@ -401,6 +432,16 @@ export type SteamApiClient = {
     appId: SteamAppId,
   ) => Promise<Result<AchievementsResult, SteamApiError>>
   /**
+   * Community completion percentages for a single app. Public endpoint —
+   * no API key required by Steam, but we pass the same key for consistency.
+   * Steam returns HTTP 403 with `{}` for apps that have no achievements
+   * (or aren't visible); we surface that as ok([]) to match the empty-list
+   * case rather than treating it as a hard error.
+   */
+  readonly getGlobalAchievementPercents: (
+    appId: SteamAppId,
+  ) => Promise<Result<ReadonlyArray<GlobalAchievementPercent>, SteamApiError>>
+  /**
    * Batch-fetches store metadata (capsules, release date, reviews, …) for the
    * given mix of apps and packages (subs). One HTTP call regardless of input
    * size, so callers should chunk inputs if they want to bound payloads.
@@ -472,6 +513,29 @@ export const createSteamApiClient = (cfg: SteamApiClientConfig): SteamApiClient 
         return json
       }
       return err({ kind: 'http_status', status: res.status, body })
+    },
+    getGlobalAchievementPercents: async (appId) => {
+      const url = buildUrl('/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v0002/', {
+        gameid: String(appId),
+        format: 'json',
+      })
+      let res: Response
+      try {
+        res = await fetcher(url)
+      } catch (e) {
+        return err({ kind: 'network', message: e instanceof Error ? e.message : String(e) })
+      }
+      const body = await res.text()
+      // Steam returns 403 + `{}` for apps with no achievements (or hidden
+      // ones). Treat as a successful "no data" result rather than an error
+      // so the refresh job doesn't keep retrying these every cycle.
+      if (res.status === 403) return ok([])
+      if (res.status < 200 || res.status >= 300) {
+        return err({ kind: 'http_status', status: res.status, body })
+      }
+      const json = safeJsonParse(body)
+      if (!json.ok) return json
+      return parseGlobalAchievementPercents(json.value)
     },
     getStoreItems: async (requests) => {
       if (requests.length === 0) return ok([])

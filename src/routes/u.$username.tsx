@@ -1,5 +1,6 @@
 import { Link, createFileRoute, getRouteApi, notFound, useNavigate } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
+import type { CommonAchievementProgress } from '#/domain/achievement-criteria'
 import { z } from 'zod'
 
 import { BulkStatusBar } from '#/components/BulkStatusBar'
@@ -99,7 +100,9 @@ function UserPage() {
     noWinnersGiveaways,
     creatorStats,
     groupMemberships,
+    commonByWinId,
   } = Route.useLoaderData()
+  const commonMap = useMemo(() => new Map(commonByWinId), [commonByWinId])
   const { currentUser } = rootApi.useLoaderData()
   const search = Route.useSearch()
   const navigate = useNavigate({ from: '/u/$username' })
@@ -234,6 +237,7 @@ function UserPage() {
           username={user.steamgiftsUsername}
           canEditStatus={canEditStatus}
           selection={selection}
+          commonByWinId={commonMap}
         />
       ) : (
         <MyGiveawaysPanel
@@ -243,6 +247,7 @@ function UserPage() {
           username={user.steamgiftsUsername}
           canEditStatus={canEditStatus}
           selection={selection}
+          commonByWinId={commonMap}
         />
       )}
       {canEditStatus ? (
@@ -262,11 +267,13 @@ function MyWinsPanel({
   username,
   canEditStatus,
   selection,
+  commonByWinId,
 }: {
   readonly winsByStatus: Readonly<Record<WinStatus, Page<WinView>>>
   readonly username: string
   readonly canEditStatus: boolean
   readonly selection?: WinsTableSelection | undefined
+  readonly commonByWinId: ReadonlyMap<number, CommonAchievementProgress>
 }) {
   return (
     <div className="space-y-6">
@@ -284,6 +291,7 @@ function MyWinsPanel({
               showWinner={false}
               canEditStatus={canEditStatus}
               selection={selection}
+              commonByWinId={commonByWinId}
             />
             <Pagination
               page={page.page}
@@ -314,6 +322,7 @@ function MyGiveawaysPanel({
   username,
   canEditStatus,
   selection,
+  commonByWinId,
 }: {
   readonly winsOnCreatedByStatus: Readonly<Record<WinStatus, Page<WinView>>>
   readonly noWinnersGiveaways: Page<UserCreatedGiveawayView>
@@ -321,6 +330,7 @@ function MyGiveawaysPanel({
   readonly username: string
   readonly canEditStatus: boolean
   readonly selection?: WinsTableSelection | undefined
+  readonly commonByWinId: ReadonlyMap<number, CommonAchievementProgress>
 }) {
   if (creatorStats.total === 0) {
     return <p className="text-sm text-neutral-600">No giveaways created.</p>
@@ -342,6 +352,7 @@ function MyGiveawaysPanel({
               showWinner={true}
               canEditStatus={canEditStatus}
               selection={selection}
+              commonByWinId={commonByWinId}
             />
             <Pagination
               page={page.page}

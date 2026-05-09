@@ -48,7 +48,8 @@ export const Route = createFileRoute('/app/$appId')({
 })
 
 function GamePage() {
-  const { app, wins, giveaways } = Route.useLoaderData()
+  const { app, wins, giveaways, commonByWinId } = Route.useLoaderData()
+  const commonMap = new Map(commonByWinId)
   const { currentUser } = rootApi.useLoaderData()
   const search = Route.useSearch()
   const navigate = useNavigate({ from: '/app/$appId' })
@@ -103,7 +104,12 @@ function GamePage() {
 
       {activeTab === 'wins' ? (
         <section className="space-y-3">
-          <WinsTable wins={wins.rows} showGame={false} canViewModWin={userIsMod} />
+          <WinsTable
+            wins={wins.rows}
+            showGame={false}
+            canViewModWin={userIsMod}
+            commonByWinId={commonMap}
+          />
           <Pagination
             page={wins.page}
             pageSize={wins.pageSize}

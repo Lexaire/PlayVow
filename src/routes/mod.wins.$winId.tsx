@@ -8,7 +8,12 @@ import { SteamGiftsIcon, SteamIcon } from '#/components/BrandIcons'
 import { GameActivityFeed } from '#/components/GameActivityFeed'
 import { LocalDate } from '#/components/LocalDate'
 import { PlaytimeAchievementsChart } from '#/components/PlaytimeAchievementsChart'
-import { StatusBadge, renderAchievements, renderScreenshots } from '#/components/WinsTable'
+import {
+  StatusBadge,
+  renderAchievements,
+  renderCommonAchievements,
+  renderScreenshots,
+} from '#/components/WinsTable'
 import { allowedActionsFrom, targetStatus } from '#/domain/win-status'
 import type { ModAction } from '#/domain/win-status'
 import {
@@ -51,7 +56,7 @@ export const Route = createFileRoute('/mod/wins/$winId')({
 })
 
 function ModWinDetailPage() {
-  const { win, auditEntries, observations, achievementUnlocks, membershipStatus } =
+  const { win, auditEntries, observations, achievementUnlocks, membershipStatus, commonAchievements } =
     Route.useLoaderData()
   const router = useRouter()
   const setStatus = useServerFn(setWinStatus)
@@ -183,7 +188,13 @@ function ModWinDetailPage() {
           <dt className="text-neutral-500">Last 2 weeks</dt>
           <dd>{renderPlaytimeCell(win.playtime2WeeksMinutes)}</dd>
           <dt className="text-neutral-500">Achievements</dt>
-          <dd>{renderAchievements(win, { showAltLinks: true })}</dd>
+          <dd>{renderAchievements(win, { showAltLinks: true, common: commonAchievements })}</dd>
+          {commonAchievements.status === 'no_achievements' ? null : (
+            <>
+              <dt className="text-neutral-500">Common achievements</dt>
+              <dd>{renderCommonAchievements(commonAchievements)}</dd>
+            </>
+          )}
           <dt className="text-neutral-500">Screenshots</dt>
           <dd>{renderScreenshots(win)}</dd>
         </dl>

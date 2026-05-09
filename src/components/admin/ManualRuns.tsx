@@ -7,6 +7,7 @@ import {
   pollOneWinFn,
   runBackfillWinnersFn,
   runPollAllFn,
+  runRefreshAppAchievementPercentsFn,
   runScrapeAllFn,
   runScrapeSteamMembersFn,
   scrapeOneGroupFn,
@@ -51,6 +52,7 @@ export function ManualRuns({
   const runPollAll = useServerFn(runPollAllFn)
   const runBackfillWinners = useServerFn(runBackfillWinnersFn)
   const runScrapeSteamMembers = useServerFn(runScrapeSteamMembersFn)
+  const runRefreshAppAchievementPercents = useServerFn(runRefreshAppAchievementPercentsFn)
 
   const [msg, setMsg] = useState<Msg | null>(null)
   const [pending, setPending] = useState<string | null>(null)
@@ -157,6 +159,15 @@ export function ManualRuns({
       if (!r.ok) return formatBusyOrNotFound(r.error)
       return queuedMsg(
         'Queued: refresh Steam group member rosters. The worker will pick this up within 30 seconds.',
+      )
+    })
+
+  const onRunRefreshAppAchievementPercents = () =>
+    void wrap('refreshAppAchPercents', async () => {
+      const r = await runRefreshAppAchievementPercents({ data: {} })
+      if (!r.ok) return formatBusyOrNotFound(r.error)
+      return queuedMsg(
+        'Queued: refresh community-completion percentages for app achievements. The worker will pick this up within 30 seconds.',
       )
     })
 
@@ -286,6 +297,12 @@ export function ManualRuns({
             help="Updates the list of who is currently in each group on Steam itself (separate from the SteamGifts side). Normally runs once a day on its own."
             onClick={onRunScrapeSteamMembers}
             busy={pending === 'steamMembers'}
+          />
+          <Action
+            label="Refresh community achievement percentages"
+            help="Asks Steam for the % of all owners who have unlocked each achievement, per game. Powers the 'common achievements' badge. Normally runs once a day; each game is only re-checked every ~90 days."
+            onClick={onRunRefreshAppAchievementPercents}
+            busy={pending === 'refreshAppAchPercents'}
           />
         </Section>
       </div>

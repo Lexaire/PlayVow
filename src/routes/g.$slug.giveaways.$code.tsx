@@ -21,7 +21,8 @@ export const Route = createFileRoute('/g/$slug/giveaways/$code')({
 })
 
 function GiveawayPage() {
-  const { group, giveaway, wins } = Route.useLoaderData()
+  const { group, giveaway, wins, commonByWinId } = Route.useLoaderData()
+  const commonMap = new Map(commonByWinId)
   const { currentUser } = rootApi.useLoaderData()
   const userIsMod = isMod(currentUser)
   const [capsuleFailed, setCapsuleFailed] = useState(false)
@@ -118,7 +119,12 @@ function GiveawayPage() {
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">Winners</h2>
         {hasEnded ? (
-          <WinsTable wins={wins} showGame={false} canViewModWin={userIsMod} />
+          <WinsTable
+            wins={wins}
+            showGame={false}
+            canViewModWin={userIsMod}
+            commonByWinId={commonMap}
+          />
         ) : (
           <p className="text-sm text-neutral-600">
             Winners will be drawn when this giveaway ends on <LocalDate date={giveaway.endedAt} />.

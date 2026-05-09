@@ -24,6 +24,14 @@ import {
 } from '#/db/schema'
 import { listAuditEntriesForTarget } from '#/repos/auditLog'
 import type { AuditEntry, AuditEntryReadError } from '#/repos/auditLog'
+import {
+  COMMON_ACHIEVEMENT_THRESHOLD,
+  type CommonAchievementProgress,
+} from '#/domain/achievement-criteria'
+import {
+  getCommonAchievementProgress,
+  getCommonAchievementProgressBatch,
+} from '#/repos/achievements'
 import { findSteamAppById, type SteamApp } from '#/repos/steamApps'
 import { findSteamSubById, type SteamSub } from '#/repos/steamSubs'
 import {
@@ -262,6 +270,9 @@ export type UserPageData = {
   readonly noWinnersGiveaways: Page<UserCreatedGiveawayView>
   readonly creatorStats: CreatorStats
   readonly groupMemberships: ReadonlyArray<UserGroupMembershipView>
+  // One map covering every winId visible across all status panels (own +
+  // created × all five statuses). Routes consume via new Map(commonByWinId).
+  readonly commonByWinId: CommonByWinId
 }
 
 export type GiveawayPageData = {
@@ -276,6 +287,7 @@ export type GiveawayPageData = {
     readonly creator: GiveawayCreatorSummary
   }
   readonly wins: ReadonlyArray<WinView>
+  readonly commonByWinId: CommonByWinId
 }
 
 // Game pages aggregate every win and every giveaway for a single Steam app
@@ -285,12 +297,14 @@ export type GamePageData = {
   readonly app: SteamApp
   readonly wins: Page<WinView>
   readonly giveaways: Page<UserCreatedGiveawayView>
+  readonly commonByWinId: CommonByWinId
 }
 
 export type SubPageData = {
   readonly sub: SteamSub
   readonly wins: Page<WinView>
   readonly giveaways: Page<UserCreatedGiveawayView>
+  readonly commonByWinId: CommonByWinId
 }
 
 export const listGroupSummaries = async (db: DbOrTx): Promise<ReadonlyArray<GroupSummary>> => {
@@ -716,6 +730,21 @@ export const getUserPageDataByUsername = async (
     steamgiftsUsername: requireSgUsername(userRow),
     avatarUrl: userRow.avatarUrl,
   }
+
+  // Aggregate every visible winId across both grids (5 statuses × {own,
+  // created}). Deduped because a single win can technically appear in only
+  // one status, but collecting from all 10 lists in a Set keeps the code
+  // tolerant of future overlap.
+  const allVisibleWinIds = new Set<number>()
+  for (const s of ALL_STATUSES) {
+    for (const w of winsByStatus[s].rows) allVisibleWinIds.add(w.id)
+    for (const w of winsOnCreatedByStatus[s].rows) allVisibleWinIds.add(w.id)
+  }
+  const commonByWinIdMap = await getCommonAchievementProgressBatch(db, {
+    winIds: [...allVisibleWinIds],
+    threshold: COMMON_ACHIEVEMENT_THRESHOLD,
+  })
+
   return {
     user,
     winsByStatus,
@@ -723,16 +752,23 @@ export const getUserPageDataByUsername = async (
     noWinnersGiveaways,
     creatorStats,
     groupMemberships,
+    commonByWinId: Array.from(commonByWinIdMap),
   }
 }
 
 export type ModWinsFilter = 'all' | 'pending'
+
+// Per-win common-achievement progress as entries (serializable across the
+// server-fn boundary; Map collapses to {} during type inference). Routes
+// reconstruct Map(commonByWinId) before passing to WinsTable.
+export type CommonByWinId = ReadonlyArray<readonly [number, CommonAchievementProgress]>
 
 export type ModWinsPageData = {
   readonly group: GroupSummary
   readonly wins: Page<WinView>
   readonly filter: ModWinsFilter
   readonly inGroupSteamIds: ReadonlyArray<SteamId>
+  readonly commonByWinId: CommonByWinId
 }
 
 export const getModWinsPage = async (
@@ -767,7 +803,13 @@ export const getModWinsPage = async (
   const steamIds = Array.from(
     new Set(winViews.flatMap((w) => (w.user.steamId ? [w.user.steamId] : []))),
   )
-  const inGroupSteamIdsSet = await batchGetOpenMembershipSteamIds(db, groupRow.id, steamIds)
+  const [inGroupSteamIdsSet, commonByWinIdMap] = await Promise.all([
+    batchGetOpenMembershipSteamIds(db, groupRow.id, steamIds),
+    getCommonAchievementProgressBatch(db, {
+      winIds: winViews.map((w) => w.id),
+      threshold: COMMON_ACHIEVEMENT_THRESHOLD,
+    }),
+  ])
   const inGroupSteamIds = Array.from(inGroupSteamIdsSet)
 
   return {
@@ -775,6 +817,7 @@ export const getModWinsPage = async (
     wins: { rows: winViews, total: totalRows[0]?.n ?? 0, page, pageSize },
     filter,
     inGroupSteamIds,
+    commonByWinId: Array.from(commonByWinIdMap),
   }
 }
 
@@ -803,6 +846,7 @@ export type ModWinDetailData = {
   readonly observations: ReadonlyArray<WinObservationView>
   readonly achievementUnlocks: ReadonlyArray<AchievementUnlockView>
   readonly membershipStatus: MembershipStatusView | null
+  readonly commonAchievements: CommonAchievementProgress
 }
 
 export const getModWinDetail = async (
@@ -812,7 +856,7 @@ export const getModWinDetail = async (
   const [row] = await selectWinJoin(db).where(eq(wins.id, winId)).limit(1)
   if (!row) return null
 
-  const [auditEntries, observationRows, unlockRows, membershipStatus] = await Promise.all([
+  const [auditEntries, observationRows, unlockRows, membershipStatus, commonAchievements] = await Promise.all([
     listAuditEntriesForTarget(db, 'win', winId, WIN_AUDIT_LOG_LIMIT),
     db
       .select({
@@ -847,6 +891,7 @@ export const getModWinDetail = async (
     row.user.steamId
       ? getLatestMembership(db, row.group.id, row.user.steamId)
       : Promise.resolve(null),
+    getCommonAchievementProgress(db, { winId, threshold: COMMON_ACHIEVEMENT_THRESHOLD }),
   ])
 
   const achievementUnlocks: ReadonlyArray<AchievementUnlockView> = unlockRows
@@ -865,6 +910,7 @@ export const getModWinDetail = async (
     observations: observationRows,
     achievementUnlocks,
     membershipStatus,
+    commonAchievements,
   }
 }
 
@@ -901,6 +947,11 @@ export const getGiveawayPageData = async (
   const winRows = await selectWinJoin(db)
     .where(eq(wins.giveawayId, row.giveaway.id))
     .orderBy(asc(wins.wonAt))
+  const winViews = winRows.map(toWinView)
+  const commonByWinId = await getCommonAchievementProgressBatch(db, {
+    winIds: winViews.map((w) => w.id),
+    threshold: COMMON_ACHIEVEMENT_THRESHOLD,
+  })
 
   return {
     group: row.group,
@@ -918,7 +969,8 @@ export const getGiveawayPageData = async (
         avatarUrl: row.creator.avatarUrl,
       },
     },
-    wins: winRows.map(toWinView),
+    wins: winViews,
+    commonByWinId: Array.from(commonByWinId),
   }
 }
 
@@ -1024,7 +1076,16 @@ export const getGamePageData = async (
     listWinsForGiveawayWhere(db, eq(giveaways.steamAppId, appId), winsPage, pageSize),
     listGiveawaysForGiveawayWhere(db, eq(giveaways.steamAppId, appId), giveawaysPage, pageSize),
   ])
-  return { app, wins: winsPageData, giveaways: giveawaysPageData }
+  const commonByWinId = await getCommonAchievementProgressBatch(db, {
+    winIds: winsPageData.rows.map((w) => w.id),
+    threshold: COMMON_ACHIEVEMENT_THRESHOLD,
+  })
+  return {
+    app,
+    wins: winsPageData,
+    giveaways: giveawaysPageData,
+    commonByWinId: Array.from(commonByWinId),
+  }
 }
 
 export const getSubPageData = async (
@@ -1040,5 +1101,14 @@ export const getSubPageData = async (
     listWinsForGiveawayWhere(db, eq(giveaways.steamSubId, subId), winsPage, pageSize),
     listGiveawaysForGiveawayWhere(db, eq(giveaways.steamSubId, subId), giveawaysPage, pageSize),
   ])
-  return { sub, wins: winsPageData, giveaways: giveawaysPageData }
+  const commonByWinId = await getCommonAchievementProgressBatch(db, {
+    winIds: winsPageData.rows.map((w) => w.id),
+    threshold: COMMON_ACHIEVEMENT_THRESHOLD,
+  })
+  return {
+    sub,
+    wins: winsPageData,
+    giveaways: giveawaysPageData,
+    commonByWinId: Array.from(commonByWinId),
+  }
 }

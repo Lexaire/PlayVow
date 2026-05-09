@@ -11,9 +11,63 @@ import {
 import { LocalDate } from '#/components/LocalDate'
 import { StatusPillEditor } from '#/components/StatusPillEditor'
 import type { WinStatus } from '#/db/schema'
+import type { CommonAchievementProgress } from '#/domain/achievement-criteria'
 import { formatPlaytimeCompact, formatPlaytimePrecise } from '#/lib/playtime'
 import { smallCapsuleSmallSize, steamAssetUrl } from '#/lib/steam-assets'
 import type { GiveawayTargetView, WinUserSummary, WinView } from '#/server/queries'
+
+// Tooltip text shared by both common-achievement renderers. Spells out that
+// the count is a soft target — we never auto-decide a status from it — and
+// quotes the threshold so a viewer can interpret the bare "N minimum"
+// number on hover.
+const commonAchievementsTooltip = (progress: {
+  readonly threshold: number
+  readonly total: number
+}): string =>
+  `Soft minimum: ${String(progress.total)} achievement${progress.total === 1 ? '' : 's'} for this game have been unlocked by ≥ ${String(progress.threshold)}% of the community. The achievements link turns green once the user has unlocked at least this many achievements.`
+
+// Compact inline badge variant of renderCommonAchievements, used in list
+// rows next to the existing "12/120" achievement count. Shows the THRESHOLD
+// count (how many community-common achievements exist), not how many this
+// user unlocked — that signal is carried by the achievements link going
+// green. Renders nothing when undefined (no data passed) or when the
+// criterion doesn't apply (no_achievements / no_percent_data / 0 qualify).
+const renderCommonAchievementBadge = (
+  progress: CommonAchievementProgress | undefined,
+): ReactNode => {
+  if (progress === undefined) return null
+  if (progress.status === 'no_achievements') return null
+  if (progress.status === 'no_percent_data') return null
+  if (progress.total === 0) return null
+  return (
+    <span className="text-xs text-neutral-500" title={commonAchievementsTooltip(progress)}>
+      ({String(progress.total)} minimum)
+    </span>
+  )
+}
+
+// Verbose variant used in the mod detail dl row. Same data, fuller styling.
+// Three display states: render nothing for 'no_achievements' (criterion
+// doesn't apply), a placeholder for 'no_percent_data' (transient), and the
+// count for 'computed'. Like the badge, this displays the threshold count,
+// not what the user has unlocked.
+export const renderCommonAchievements = (progress: CommonAchievementProgress): ReactNode => {
+  if (progress.status === 'no_achievements') return null
+  if (progress.status === 'no_percent_data') {
+    return (
+      <span
+        className="text-neutral-400"
+        title="Community percentages haven't been refreshed for this game yet"
+      >
+        —
+      </span>
+    )
+  }
+  if (progress.total === 0) return null
+  return (
+    <span title={commonAchievementsTooltip(progress)}>{String(progress.total)} minimum</span>
+  )
+}
 
 const STATUS_STYLES: Readonly<Record<WinStatus, string>> = {
   pending: 'bg-amber-100 text-amber-900',
@@ -33,7 +87,13 @@ const STATUS_LABELS: Readonly<Record<WinStatus, string>> = {
 
 export const renderAchievements = (
   win: WinView,
-  { showAltLinks = false }: { readonly showAltLinks?: boolean } = {},
+  {
+    showAltLinks = false,
+    common,
+  }: {
+    readonly showAltLinks?: boolean
+    readonly common?: CommonAchievementProgress | undefined
+  } = {},
 ): ReactNode => {
   const total = win.achievementsTotal
   const unlocked = win.achievementsUnlocked
@@ -41,20 +101,29 @@ export const renderAchievements = (
   if (total === 0) return <span className="text-neutral-400">none</span>
   if (unlocked === null) return <span className="text-neutral-400">—</span>
   const allDone = unlocked === total
+  // Soft minimum is "met" once the user's TOTAL unlock count is at least
+  // the count of community-common (≥ COMMON_ACHIEVEMENT_THRESHOLD%)
+  // achievements for this game. This is a count target, not a set match —
+  // meeting it via rare achievements still counts. allDone wins regardless.
+  const meetsMinimum =
+    common?.status === 'computed' && common.total > 0 && unlocked >= common.total
+  const greenify = allDone || meetsMinimum
   const percent = Math.round((unlocked / total) * 100)
   const text = `${String(unlocked)}/${String(total)} (${String(percent)}%)`
   const canLink = win.user.steamId !== null && win.giveaway.target.kind === 'app'
   if (!canLink) {
-    return <span className={allDone ? 'text-emerald-700' : ''}>{text}</span>
+    return <span className={greenify ? 'text-emerald-700' : ''}>{text}</span>
   }
   const appId = win.giveaway.target.kind === 'app' ? win.giveaway.target.appId : 0
   const steamHref = `https://steamcommunity.com/profiles/${win.user.steamId}/stats/${String(appId)}/achievements/`
+  const linkTitle = meetsMinimum && !allDone ? 'Soft minimum met' : undefined
   const steamLink = (
     <a
       href={steamHref}
       target="_blank"
       rel="noreferrer"
-      className={`hover:underline ${allDone ? 'text-emerald-700' : 'text-blue-700'}`}
+      {...(linkTitle ? { title: linkTitle } : {})}
+      className={`hover:underline ${greenify ? 'text-emerald-700' : 'text-blue-700'}`}
     >
       {text}
     </a>
@@ -220,6 +289,7 @@ export function WinsTable({
   canEditStatus = false,
   canViewModWin = false,
   selection,
+  commonByWinId,
 }: {
   readonly wins: ReadonlyArray<WinView>
   readonly showWinner?: boolean
@@ -227,6 +297,12 @@ export function WinsTable({
   readonly canEditStatus?: boolean
   readonly canViewModWin?: boolean
   readonly selection?: WinsTableSelection | undefined
+  // Optional per-win community-common achievement progress, keyed by win id.
+  // Pages that want to surface the YIRG criterion (currently mod surfaces +
+  // game pages) populate this from getCommonAchievementProgressBatch. Wins
+  // with no entry render no badge, which matches the "we haven't computed
+  // this yet" state.
+  readonly commonByWinId?: ReadonlyMap<number, CommonAchievementProgress> | undefined
 }) {
   if (wins.length === 0) {
     return <p className="text-sm text-neutral-600">No wins.</p>
@@ -266,6 +342,7 @@ export function WinsTable({
             canViewModWin={canViewModWin}
             isSelected={selection?.selectedIds.has(w.id) ?? false}
             onToggle={selection?.onToggle}
+            commonAchievements={commonByWinId?.get(w.id)}
           />
         ))}
       </ul>
@@ -355,7 +432,12 @@ export function WinsTable({
                 </td>
                 <td className="px-3 py-0 text-neutral-700">{renderPlaytime(w)}</td>
                 <td className="whitespace-nowrap px-3 py-0 text-neutral-700">
-                  {renderAchievements(w)}
+                  <span className="inline-flex items-baseline gap-1.5">
+                    {renderAchievements(w, { common: commonByWinId?.get(w.id) })}
+                    {commonByWinId
+                      ? renderCommonAchievementBadge(commonByWinId.get(w.id))
+                      : null}
+                  </span>
                 </td>
                 <td className="whitespace-nowrap px-3 py-0 text-neutral-700">
                   {renderScreenshots(w)}
@@ -388,6 +470,7 @@ function WinCard({
   canViewModWin,
   isSelected,
   onToggle,
+  commonAchievements,
 }: {
   readonly win: WinView
   readonly showGame: boolean
@@ -396,6 +479,7 @@ function WinCard({
   readonly canViewModWin: boolean
   readonly isSelected: boolean
   readonly onToggle: ((winId: number) => void) | undefined
+  readonly commonAchievements: CommonAchievementProgress | undefined
 }) {
   const w = win
   return (
@@ -457,7 +541,8 @@ function WinCard({
           </span>
         )}
         {renderPlaytime(w)}
-        {renderAchievements(w)}
+        {renderAchievements(w, { common: commonAchievements })}
+        {renderCommonAchievementBadge(commonAchievements)}
         {w.screenshotCount !== null && w.screenshotCount > 0 ? (
           <span className="inline-flex items-center gap-1">
             <CameraIcon />

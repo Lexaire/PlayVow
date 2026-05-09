@@ -124,6 +124,9 @@ const stubSteam = (
   getStoreItems: () => {
     throw new Error('getStoreItems not used in this test')
   },
+  getGlobalAchievementPercents: () => {
+    throw new Error('getGlobalAchievementPercents not used in this test')
+  },
 })
 
 type CallRecord = {
@@ -152,6 +155,9 @@ const recordingSteam = (
     },
     getStoreItems: () => {
       throw new Error('getStoreItems not used in this test')
+    },
+    getGlobalAchievementPercents: () => {
+      throw new Error('getGlobalAchievementPercents not used in this test')
     },
   }
   return { client, calls }
@@ -331,6 +337,9 @@ describe('pollPlaytime', () => {
       getPlayerAchievements: () => Promise.resolve(ok({ kind: 'no_stats' as const })),
       getStoreItems: () => {
         throw new Error('getStoreItems not used in this test')
+      },
+      getGlobalAchievementPercents: () => {
+        throw new Error('getGlobalAchievementPercents not used in this test')
       },
     }
     await seed(db)

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
 export type SteamId = string & { readonly __brand: 'SteamId' }
 export type SteamAppId = number & { readonly __brand: 'SteamAppId' }
@@ -265,6 +265,14 @@ export const steamAchievements = sqliteTable(
     grayIconUrl: text('gray_icon_url'),
     hidden: integer('hidden', { mode: 'boolean' }),
     lastSyncedAt: timestamp('last_synced_at'),
+    // Community completion percentage, 0..100. Refreshed quarterly by
+    // refresh_app_achievement_percents using
+    // GetGlobalAchievementPercentagesForApp. Null = never fetched. The
+    // denominator Steam uses is "all owners" (incl. never-launched), so
+    // this number is inflated relative to "% of players who actually played"
+    // — interpret thresholds with that in mind (see YIRG-ACHIEVEMENTS.md).
+    globalPercent: real('global_percent'),
+    percentRefreshedAt: timestamp('percent_refreshed_at'),
   },
   (t) => [uniqueIndex('steam_achievements_app_apiname_uniq').on(t.appId, t.apiname)],
 )

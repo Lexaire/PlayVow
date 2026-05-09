@@ -41,6 +41,15 @@ export const JOB_CATALOGUE: ReadonlyArray<JobCatalogueEntry> = [
     description: 'Poll Steam playtime and achievement progress for pending wins.',
     expectedIntervalMs: 90 * 60 * 1000,
   },
+  {
+    name: 'refresh_app_achievement_percents',
+    // Daily at 07:30 — runs after the 06:30 backfill so we're not competing
+    // for the Steam rate limiter at the same minute. Picks up apps whose
+    // global_percent is null or > 90 days stale.
+    cron: '30 7 * * *',
+    description: 'Refresh community-completion percentages for known app achievements.',
+    expectedIntervalMs: 36 * HOUR,
+  },
 ]
 
 export const findJobInCatalogue = (name: string): JobCatalogueEntry | undefined =>

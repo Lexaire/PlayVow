@@ -1,0 +1,38 @@
+{
+  "achievementpercentages": {
+    "achievements": [
+      {
+        "name": "HL2_ESCAPE_APARTMENTRAID",
+        "percent": "70.4"
+      },
+      {
+        "name": "HL2_GET_CROWBAR",
+        "percent": "67.3"
+      },
+      {
+        "name": "HL2_GET_AIRBOAT",
+        "percent": "52.5"
+      },
+      {
+        "name": "HL2_GET_AIRBOATGUN",
+        "percent": "46.1"
+      },
+      {
+        "name": "HL2_PUT_CANINTRASH",
+        "percent": "45.3"
+      },
+      {
+        "name": "HL2_KILL_CHOPPER",
+        "percent": "43.9"
+      },
+      {
+        "name": "HL2_GET_GRAVITYGUN",
+        "percent": "43.0"
+      },
+      {
+        "name": "HL2_BEAT_CEMETERY",
+        "percent": "38.6"
+      }
+    ]
+  }
+}

@@ -4,7 +4,8 @@ import { z } from 'zod'
 import { CameraIcon, SteamIcon } from '#/components/BrandIcons'
 import { Pagination } from '#/components/Pagination'
 import { StatusPillEditor } from '#/components/StatusPillEditor'
-import { renderAchievements } from '#/components/WinsTable'
+import { renderAchievements, renderCommonAchievements } from '#/components/WinsTable'
+import type { CommonAchievementProgress } from '#/domain/achievement-criteria'
 import { formatPlaytimeCompact, formatPlaytimePrecise } from '#/lib/playtime'
 import { isMod } from '#/domain/roles'
 import { fetchModGroupPage, fetchModSession } from '#/server/modFns'
@@ -46,8 +47,9 @@ export const Route = createFileRoute('/mod/g/$slug')({
 })
 
 function ModGroupPage() {
-  const { group, wins, filter, inGroupSteamIds } = Route.useLoaderData()
+  const { group, wins, filter, inGroupSteamIds, commonByWinId } = Route.useLoaderData()
   const inGroupSet = new Set(inGroupSteamIds)
+  const commonMap = new Map(commonByWinId)
   const now = Date.now()
   const emptyMessage = filter === 'pending' ? 'No pending wins.' : 'No wins.'
 
@@ -76,7 +78,13 @@ function ModGroupPage() {
         <>
           <ul className="space-y-2 sm:hidden">
             {wins.rows.map((w) => (
-              <ModWinCard key={w.id} w={w} now={now} inGroupSteamIds={inGroupSet} />
+              <ModWinCard
+                key={w.id}
+                w={w}
+                now={now}
+                inGroupSteamIds={inGroupSet}
+                common={commonMap.get(w.id)}
+              />
             ))}
           </ul>
           <div className="hidden overflow-x-auto rounded border border-neutral-200 bg-surface sm:block">
@@ -97,7 +105,13 @@ function ModGroupPage() {
               </thead>
               <tbody className="divide-y divide-neutral-100">
                 {wins.rows.map((w) => (
-                  <ModWinRow key={w.id} w={w} now={now} inGroupSteamIds={inGroupSet} />
+                  <ModWinRow
+                    key={w.id}
+                    w={w}
+                    now={now}
+                    inGroupSteamIds={inGroupSet}
+                    common={commonMap.get(w.id)}
+                  />
                 ))}
               </tbody>
             </table>
@@ -170,10 +184,12 @@ function ModWinCard({
   w,
   now,
   inGroupSteamIds,
+  common,
 }: {
   readonly w: ModWinRow
   readonly now: number
   readonly inGroupSteamIds: ReadonlySet<string>
+  readonly common: CommonAchievementProgress | undefined
 }) {
   const daysLeft = Math.floor((w.playDeadline.getTime() - now) / (1000 * 60 * 60 * 24))
   const isOverdue = daysLeft < 0
@@ -239,7 +255,8 @@ function ModWinCard({
         ) : (
           <span>—</span>
         )}
-        {renderAchievements(w, { showAltLinks: true })}
+        {renderAchievements(w, { showAltLinks: true, common })}
+        {common ? renderCommonAchievements(common) : null}
         <ScreenshotCell w={w} />
       </div>
     </li>
@@ -250,10 +267,12 @@ function ModWinRow({
   w,
   now,
   inGroupSteamIds,
+  common,
 }: {
   readonly w: ModWinRow
   readonly now: number
   readonly inGroupSteamIds: ReadonlySet<string>
+  readonly common: CommonAchievementProgress | undefined
 }) {
   const daysLeft = Math.floor((w.playDeadline.getTime() - now) / (1000 * 60 * 60 * 24))
   const isOverdue = daysLeft < 0
@@ -333,7 +352,10 @@ function ModWinRow({
               '—'
             )}
           </div>
-          <div className="text-xs">{renderAchievements(w, { showAltLinks: true })}</div>
+          <div className="flex flex-wrap items-baseline gap-1.5 text-xs">
+            {renderAchievements(w, { showAltLinks: true, common })}
+            {common ? renderCommonAchievements(common) : null}
+          </div>
         </div>
       </td>
       <td className="w-28 whitespace-nowrap px-3 py-2">
