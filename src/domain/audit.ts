@@ -73,11 +73,30 @@ export type GroupSnapshot = z.infer<typeof GroupSnapshotSchema>
 // daily scrape can land hundreds of rows and would flood the log without
 // adding signal. The `source` field exists for forward-compatibility if we
 // ever want to opt SG creates back in.
+//
+// startedAt/endedAt are optional for backward compatibility — historical
+// rows from before mods could backdate manual giveaways don't carry them.
+// New emits always include them so an "edit dates" later is comparable
+// against the creation-time values in the same log stream.
+const TimestampSchema = z.coerce.date()
 const GiveawayCreatedSchema = z.object({
   source: WinSourceSchema,
   groupId: z.number().int().positive(),
   appId: z.number().int().nonnegative().nullable(),
   subId: z.number().int().nonnegative().nullable(),
+  startedAt: TimestampSchema.optional(),
+  endedAt: TimestampSchema.optional(),
+})
+
+const GiveawayDateRangeSchema = z.object({
+  startedAt: TimestampSchema,
+  endedAt: TimestampSchema,
+})
+
+const GiveawayDatesUpdatedSchema = z.object({
+  groupId: z.number().int().positive(),
+  before: GiveawayDateRangeSchema,
+  after: GiveawayDateRangeSchema,
 })
 
 // Manual-only soft-delete; SG-scraped giveaways never reach this path. We
@@ -116,6 +135,8 @@ export type AuditEvent =
       readonly groupId: number
       readonly appId: SteamAppId | null
       readonly subId: SteamSubId | null
+      readonly startedAt?: Date
+      readonly endedAt?: Date
     }
   | {
       readonly kind: 'giveaway_deleted'
@@ -123,6 +144,12 @@ export type AuditEvent =
       readonly appId: SteamAppId | null
       readonly subId: SteamSubId | null
       readonly winCount: number
+    }
+  | {
+      readonly kind: 'giveaway_dates_updated'
+      readonly groupId: number
+      readonly before: { readonly startedAt: Date; readonly endedAt: Date }
+      readonly after: { readonly startedAt: Date; readonly endedAt: Date }
     }
   | {
       readonly kind: 'role_granted'
@@ -209,6 +236,8 @@ export const parseAuditEvent = (
         groupId: r.data.groupId,
         appId: r.data.appId as SteamAppId | null,
         subId: r.data.subId as SteamSubId | null,
+        ...(r.data.startedAt !== undefined ? { startedAt: r.data.startedAt } : {}),
+        ...(r.data.endedAt !== undefined ? { endedAt: r.data.endedAt } : {}),
       })
     }
     case 'giveaway_deleted': {
@@ -222,6 +251,18 @@ export const parseAuditEvent = (
         appId: r.data.appId as SteamAppId | null,
         subId: r.data.subId as SteamSubId | null,
         winCount: r.data.winCount,
+      })
+    }
+    case 'giveaway_dates_updated': {
+      const r = GiveawayDatesUpdatedSchema.safeParse(rawPayload)
+      if (!r.success) {
+        return err({ kind: 'invalid_payload', action, issues: zodIssues(r.error) })
+      }
+      return ok({
+        kind: 'giveaway_dates_updated',
+        groupId: r.data.groupId,
+        before: r.data.before,
+        after: r.data.after,
       })
     }
     case 'role_granted': {
@@ -321,6 +362,8 @@ export const serializeAuditEvent = (
           groupId: event.groupId,
           appId: event.appId,
           subId: event.subId,
+          ...(event.startedAt !== undefined ? { startedAt: event.startedAt } : {}),
+          ...(event.endedAt !== undefined ? { endedAt: event.endedAt } : {}),
         },
       }
     case 'giveaway_deleted':
@@ -331,6 +374,15 @@ export const serializeAuditEvent = (
           appId: event.appId,
           subId: event.subId,
           winCount: event.winCount,
+        },
+      }
+    case 'giveaway_dates_updated':
+      return {
+        action: 'giveaway_dates_updated',
+        payload: {
+          groupId: event.groupId,
+          before: event.before,
+          after: event.after,
         },
       }
     case 'role_granted':

@@ -54,6 +54,15 @@ export const describeAuditEvent = (event: AuditEntry['event']): string => {
       const winSuffix = event.winCount === 1 ? '1 win' : `${String(event.winCount)} wins`
       return `Giveaway deleted: ${target} (${winSuffix})`
     }
+    case 'giveaway_dates_updated': {
+      const fmt = (d: Date) => dateTimeFormat.format(d)
+      const startedChanged = event.before.startedAt.getTime() !== event.after.startedAt.getTime()
+      const endedChanged = event.before.endedAt.getTime() !== event.after.endedAt.getTime()
+      const parts: string[] = []
+      if (startedChanged) parts.push(`started ${fmt(event.before.startedAt)} → ${fmt(event.after.startedAt)}`)
+      if (endedChanged) parts.push(`ended ${fmt(event.before.endedAt)} → ${fmt(event.after.endedAt)}`)
+      return `Giveaway dates updated: ${parts.length > 0 ? parts.join(', ') : 'no change'}`
+    }
     case 'role_granted':
       return `Role granted: ${event.before} → ${event.after}${event.reason ? ` (${event.reason})` : ''}`
     case 'role_revoked':

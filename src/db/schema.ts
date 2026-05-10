@@ -20,6 +20,7 @@ export const AUDIT_ACTIONS = [
   'group_updated',
   'giveaway_created',
   'giveaway_deleted',
+  'giveaway_dates_updated',
   'role_granted',
   'role_revoked',
   'group_moderator_granted',

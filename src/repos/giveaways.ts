@@ -148,6 +148,62 @@ export type CreateManualGiveawayInput = {
   readonly creatorUserId: number
   readonly quantity: number
   readonly addedAt: Date
+  // Optional override for the giveaway's actual lifecycle dates. When the
+  // mod backdates a manual giveaway, these come in distinct from `addedAt`
+  // (which is still used as scrapedAt — the moment we recorded it).
+  readonly startedAt?: Date
+  readonly endedAt?: Date
+}
+
+export type UpdateManualGiveawayDatesError =
+  | { readonly kind: 'not_found' }
+  | { readonly kind: 'not_manual' }
+  | { readonly kind: 'already_deleted' }
+  | { readonly kind: 'invalid_range' }
+
+export type UpdateManualGiveawayDatesResult = {
+  readonly giveaway: Giveaway
+  readonly before: { readonly startedAt: Date; readonly endedAt: Date }
+}
+
+// Updates startedAt/endedAt on a manual giveaway. SG-scraped rows are refused
+// because the next scrape would clobber the override. Returns the prior
+// values so the caller can record a before/after audit entry. The repo
+// validates the range so the rule lives next to the column definition.
+export const updateManualGiveawayDatesTx = async (
+  tx: DbOrTx,
+  giveawayId: number,
+  startedAt: Date,
+  endedAt: Date,
+): Promise<
+  | { readonly ok: true; readonly value: UpdateManualGiveawayDatesResult }
+  | { readonly ok: false; readonly error: UpdateManualGiveawayDatesError }
+> => {
+  if (startedAt.getTime() > endedAt.getTime()) {
+    return { ok: false, error: { kind: 'invalid_range' } }
+  }
+  const [existing] = await tx
+    .select()
+    .from(giveaways)
+    .where(eq(giveaways.id, giveawayId))
+    .limit(1)
+  if (!existing) return { ok: false, error: { kind: 'not_found' } }
+  if (existing.steamgiftsCode !== null) return { ok: false, error: { kind: 'not_manual' } }
+  if (existing.deletedAt !== null) return { ok: false, error: { kind: 'already_deleted' } }
+
+  const [row] = await tx
+    .update(giveaways)
+    .set({ startedAt, endedAt })
+    .where(eq(giveaways.id, giveawayId))
+    .returning()
+  if (!row) return { ok: false, error: { kind: 'not_found' } }
+  return {
+    ok: true,
+    value: {
+      giveaway: row,
+      before: { startedAt: existing.startedAt, endedAt: existing.endedAt },
+    },
+  }
 }
 
 export type SoftDeleteManualGiveawayResult = {
@@ -217,9 +273,11 @@ export const softDeleteManualGiveawayTx = async (
 }
 
 // Manual giveaway = a row added by a mod against a manual-source group.
-// No SG code, started/ended/scraped are all the moment of insertion.
-// winnersScrapedAt stays null (never enters the SG winners-backfill path
-// because that path filters on lastScrapedAt, which manual groups never set).
+// No SG code, scrapedAt is the insertion moment; startedAt/endedAt default
+// to the same but can be overridden when a mod is recording a giveaway that
+// already happened (or is scheduled). winnersScrapedAt stays null (never
+// enters the SG winners-backfill path because that path filters on
+// lastScrapedAt, which manual groups never set).
 export const createManualGiveaway = async (
   db: DbOrTx,
   input: CreateManualGiveawayInput,
@@ -233,8 +291,8 @@ export const createManualGiveaway = async (
       steamSubId: input.target.kind === 'sub' ? input.target.subId : null,
       creatorUserId: input.creatorUserId,
       quantity: input.quantity,
-      startedAt: input.addedAt,
-      endedAt: input.addedAt,
+      startedAt: input.startedAt ?? input.addedAt,
+      endedAt: input.endedAt ?? input.addedAt,
       scrapedAt: input.addedAt,
       slug: null,
       winnersScrapedAt: null,

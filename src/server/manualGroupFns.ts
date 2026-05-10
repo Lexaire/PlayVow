@@ -11,7 +11,9 @@ import { writeAuditEvent } from '#/repos/auditLog'
 import type { Giveaway } from '#/repos/giveaways'
 import {
   createManualGiveaway,
+  findGiveawayById,
   softDeleteManualGiveawayTx,
+  updateManualGiveawayDatesTx,
 } from '#/repos/giveaways'
 import { findGroupById } from '#/repos/groups'
 import { upsertSteamApp } from '#/repos/steamApps'
@@ -59,6 +61,12 @@ const AddGiveawaySchema = z.object({
   item: ItemSchema,
   creator: SteamUserInputSchema,
   winner: SteamUserInputSchema,
+  // Optional explicit lifecycle dates. When omitted, the giveaway uses
+  // "now" for both — the legacy behavior. The server enforces start <= end
+  // and accepts either Date instances (server fn payload) or ISO strings
+  // (form-submitted JSON) via z.coerce.date().
+  startedAt: z.coerce.date().optional(),
+  endedAt: z.coerce.date().optional(),
 })
 
 // "field" tags which input — creator vs. winner — failed resolution, so the
@@ -75,6 +83,7 @@ export type ItemResolveError =
 export type AddManualGiveawayError =
   | { readonly kind: 'group_not_found' }
   | { readonly kind: 'group_not_manual' }
+  | { readonly kind: 'invalid_date_range' }
   | ItemResolveError
   | SteamUserResolveError
 
@@ -134,6 +143,20 @@ export const addManualGiveawayFn = createServerFn({ method: 'POST' })
     // a real moderator hitting a missing id.
     const mod = await requireGroupModerator(group.id)
 
+    // Validate the optional date range up front. Both must be present or
+    // both absent; partial input is rejected so the caller picks a clear
+    // intent. If absent, the legacy "use now() for both" flow runs.
+    if ((data.startedAt === undefined) !== (data.endedAt === undefined)) {
+      return err({ kind: 'invalid_date_range' })
+    }
+    if (
+      data.startedAt !== undefined &&
+      data.endedAt !== undefined &&
+      data.startedAt.getTime() > data.endedAt.getTime()
+    ) {
+      return err({ kind: 'invalid_date_range' })
+    }
+
     const itemR = await resolveItem(data.item)
     if (!itemR.ok) return err(itemR.error)
     const item = itemR.value
@@ -151,7 +174,12 @@ export const addManualGiveawayFn = createServerFn({ method: 'POST' })
     const winnerSteamId = winnerR.value
 
     const now = new Date()
-    const playDeadline = computePlayDeadline(now, group.playWindowDays)
+    const startedAt = data.startedAt ?? now
+    const endedAt = data.endedAt ?? now
+    // Play deadline is anchored on the giveaway's end date, not insertion
+    // time — when a mod backdates a giveaway, "play within N days" should
+    // run from when the win actually happened.
+    const playDeadline = computePlayDeadline(endedAt, group.playWindowDays)
 
     const result = await withTransaction(dbWrite(), async (tx) => {
       // Upsert app/sub with name + lastSyncedAt so the row exists with usable
@@ -180,6 +208,8 @@ export const addManualGiveawayFn = createServerFn({ method: 'POST' })
         creatorUserId: creatorUser.id,
         quantity: MANUAL_GIVEAWAY_QUANTITY,
         addedAt: now,
+        startedAt,
+        endedAt,
       })
 
       await writeAuditEvent(tx, {
@@ -192,6 +222,8 @@ export const addManualGiveawayFn = createServerFn({ method: 'POST' })
           groupId: group.id,
           appId: item.kind === 'app' ? item.appId : null,
           subId: item.kind === 'sub' ? item.subId : null,
+          startedAt,
+          endedAt,
         },
       })
 
@@ -204,7 +236,7 @@ export const addManualGiveawayFn = createServerFn({ method: 'POST' })
       const win = await insertWinIfAbsent(tx, {
         giveawayId: giveaway.id,
         userId: winnerUser.id,
-        wonAt: now,
+        wonAt: endedAt,
         playDeadline,
       })
       if (!win) {
@@ -267,6 +299,72 @@ export const deleteManualGiveawayFn = createServerFn({ method: 'POST' })
           },
         })
         return { ok: true as const, value: { giveawayId: giveaway.id, winCount } }
+      })
+
+      if (!result.ok) return err(result.error)
+      return ok(result.value)
+    },
+  )
+
+const UpdateGiveawayDatesSchema = z.object({
+  giveawayId: z.number().int().positive(),
+  startedAt: z.coerce.date(),
+  endedAt: z.coerce.date(),
+})
+
+export type UpdateManualGiveawayDatesError =
+  | { readonly kind: 'not_found' }
+  | { readonly kind: 'not_manual' }
+  | { readonly kind: 'already_deleted' }
+  | { readonly kind: 'invalid_range' }
+
+export type UpdateManualGiveawayDatesResult = {
+  readonly giveawayId: number
+  readonly startedAt: Date
+  readonly endedAt: Date
+}
+
+// Group-moderator gated edit of a manual giveaway's lifecycle dates.
+// Mirrors the create gate (requireGroupModerator) — if a mod can record a
+// manual giveaway they can also fix its dates afterwards. SG-scraped rows
+// are refused at the repo layer; we additionally need the giveaway's
+// groupId for the gate, so the load happens here before delegating.
+export const updateManualGiveawayDatesFn = createServerFn({ method: 'POST' })
+  .inputValidator((input: z.infer<typeof UpdateGiveawayDatesSchema>) =>
+    UpdateGiveawayDatesSchema.parse(input),
+  )
+  .handler(
+    async ({
+      data,
+    }): Promise<Result<UpdateManualGiveawayDatesResult, UpdateManualGiveawayDatesError>> => {
+      const giveaway = await findGiveawayById(db(), data.giveawayId)
+      if (!giveaway) return err({ kind: 'not_found' })
+      if (giveaway.steamgiftsCode !== null) return err({ kind: 'not_manual' })
+      const mod = await requireGroupModerator(giveaway.groupId)
+
+      const result = await withTransaction(dbWrite(), async (tx) => {
+        const r = await updateManualGiveawayDatesTx(tx, data.giveawayId, data.startedAt, data.endedAt)
+        if (!r.ok) return r
+        const { giveaway: updated, before } = r.value
+        await writeAuditEvent(tx, {
+          actorUserId: mod.id,
+          targetType: 'giveaway',
+          targetId: updated.id,
+          event: {
+            kind: 'giveaway_dates_updated',
+            groupId: updated.groupId,
+            before,
+            after: { startedAt: updated.startedAt, endedAt: updated.endedAt },
+          },
+        })
+        return {
+          ok: true as const,
+          value: {
+            giveawayId: updated.id,
+            startedAt: updated.startedAt,
+            endedAt: updated.endedAt,
+          },
+        }
       })
 
       if (!result.ok) return err(result.error)

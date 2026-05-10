@@ -2,6 +2,7 @@ import { Link, getRouteApi } from '@tanstack/react-router'
 import { useState } from 'react'
 
 import { DeleteManualGiveawayButton } from '#/components/admin/DeleteManualGiveawayButton'
+import { EditManualGiveawayDatesButton } from '#/components/admin/EditManualGiveawayDatesButton'
 import { SteamGiftsIcon, SteamIcon } from '#/components/BrandIcons'
 import { CreatorLink } from '#/components/giveaway-row'
 import { LocalDate } from '#/components/LocalDate'
@@ -25,6 +26,10 @@ export function GiveawayPageView({ data }: { readonly data: GiveawayPageData }) 
   // Soft delete is admin-only and only meaningful for manual giveaways
   // (SG-scraped ones would just come back on the next scrape).
   const canDelete = isAdmin(currentUser ?? null) && group.source === 'manual'
+  // Date edits are scoped to group moderators on manual giveaways — same
+  // gate as the create flow, so anyone who can record a manual giveaway
+  // can also fix its dates afterward.
+  const canEditDates = canModerateThisGroup && group.source === 'manual'
   const [capsuleFailed, setCapsuleFailed] = useState(false)
   const hasEnded = giveaway.endedAt.getTime() <= Date.now()
   // Manual giveaways have no SteamGifts presence, so the SG link is
@@ -56,13 +61,22 @@ export function GiveawayPageView({ data }: { readonly data: GiveawayPageData }) 
           >
             ← {group.name}
           </Link>
-          {canDelete && (
-            <DeleteManualGiveawayButton
-              giveawayId={giveaway.id}
-              groupSlug={group.slug}
-              itemName={giveaway.target.name}
-            />
-          )}
+          <div className="flex items-start gap-2">
+            {canEditDates && (
+              <EditManualGiveawayDatesButton
+                giveawayId={giveaway.id}
+                startedAt={giveaway.startedAt}
+                endedAt={giveaway.endedAt}
+              />
+            )}
+            {canDelete && (
+              <DeleteManualGiveawayButton
+                giveawayId={giveaway.id}
+                groupSlug={group.slug}
+                itemName={giveaway.target.name}
+              />
+            )}
+          </div>
         </div>
         {capsuleUrl && !capsuleFailed ? (
           <img
