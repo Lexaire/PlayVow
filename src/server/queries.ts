@@ -149,6 +149,10 @@ export type CreatorStats = {
 export type WinGiveawaySummary = {
   readonly id: number
   readonly steamgiftsCode: SteamGiftsGiveawayCode | null
+  // groupId is plumbed through so per-row mod-permission checks can use the
+  // viewer's moderatedGroupIds set without an extra lookup. groupSlug stays
+  // for URL building.
+  readonly groupId: number
   readonly groupSlug: string
   readonly groupName: string
   readonly target: GiveawayTargetView
@@ -229,6 +233,7 @@ const toWinView = (row: {
   giveaway: {
     id: row.giveaway.id,
     steamgiftsCode: row.giveaway.steamgiftsCode,
+    groupId: row.group.id,
     groupSlug: row.group.slug,
     groupName: row.group.name,
     target: buildTarget(row.app, row.sub),

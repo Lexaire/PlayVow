@@ -5,20 +5,28 @@ import type {
   SgCookieTestResult,
   SteamAppId,
   SteamSubId,
-  UserRole,
   WinStatus,
 } from '#/db/schema'
-import { AUDIT_ACTIONS, SG_COOKIE_TEST_RESULTS, USER_ROLES, WIN_STATUSES } from '#/db/schema'
+import { AUDIT_ACTIONS, SG_COOKIE_TEST_RESULTS, WIN_STATUSES } from '#/db/schema'
 import type { Result } from '#/lib/result'
 import { err, ok } from '#/lib/result'
 
 const WinStatusSchema = z.enum(WIN_STATUSES)
-const UserRoleSchema = z.enum(USER_ROLES)
 const SgCookieTestResultSchema = z.enum(SG_COOKIE_TEST_RESULTS)
 
+// Audit-only superset of USER_ROLES that still admits 'moderator'. The live
+// role enum is just user/admin (per-group mods replaced the global moderator
+// role), but historical role_granted/role_revoked rows from before that
+// change can still mention 'moderator', and we want them to keep parsing
+// rather than surfacing as invalid_payload. New writes never produce
+// 'moderator'.
+const AUDIT_LEGACY_USER_ROLES = ['user', 'moderator', 'admin'] as const
+const AuditUserRoleSchema = z.enum(AUDIT_LEGACY_USER_ROLES)
+type AuditUserRole = (typeof AUDIT_LEGACY_USER_ROLES)[number]
+
 const RoleChangedSchema = z.object({
-  before: UserRoleSchema,
-  after: UserRoleSchema,
+  before: AuditUserRoleSchema,
+  after: AuditUserRoleSchema,
   reason: z.string().max(200).optional(),
 })
 
@@ -83,6 +91,11 @@ const GiveawayDeletedSchema = z.object({
   winCount: z.number().int().nonnegative(),
 })
 
+const GroupModeratorChangeSchema = z.object({
+  groupId: z.number().int().positive(),
+  userId: z.number().int().positive(),
+})
+
 export type AuditEvent =
   | { readonly kind: 'win_created'; readonly source: WinSource }
   | { readonly kind: 'win_status_changed'; readonly from: WinStatus; readonly to: WinStatus }
@@ -113,16 +126,18 @@ export type AuditEvent =
     }
   | {
       readonly kind: 'role_granted'
-      readonly before: UserRole
-      readonly after: UserRole
+      readonly before: AuditUserRole
+      readonly after: AuditUserRole
       readonly reason?: string
     }
   | {
       readonly kind: 'role_revoked'
-      readonly before: UserRole
-      readonly after: UserRole
+      readonly before: AuditUserRole
+      readonly after: AuditUserRole
       readonly reason?: string
     }
+  | { readonly kind: 'group_moderator_granted'; readonly groupId: number; readonly userId: number }
+  | { readonly kind: 'group_moderator_revoked'; readonly groupId: number; readonly userId: number }
   | { readonly kind: 'cookie_set' }
   | { readonly kind: 'cookie_cleared' }
   | { readonly kind: 'cookie_tested'; readonly result: SgCookieTestResult }
@@ -233,6 +248,28 @@ export const parseAuditEvent = (
         ...(r.data.reason !== undefined ? { reason: r.data.reason } : {}),
       })
     }
+    case 'group_moderator_granted': {
+      const r = GroupModeratorChangeSchema.safeParse(rawPayload)
+      if (!r.success) {
+        return err({ kind: 'invalid_payload', action, issues: zodIssues(r.error) })
+      }
+      return ok({
+        kind: 'group_moderator_granted',
+        groupId: r.data.groupId,
+        userId: r.data.userId,
+      })
+    }
+    case 'group_moderator_revoked': {
+      const r = GroupModeratorChangeSchema.safeParse(rawPayload)
+      if (!r.success) {
+        return err({ kind: 'invalid_payload', action, issues: zodIssues(r.error) })
+      }
+      return ok({
+        kind: 'group_moderator_revoked',
+        groupId: r.data.groupId,
+        userId: r.data.userId,
+      })
+    }
     case 'cookie_set': {
       const r = CookieSetSchema.safeParse(rawPayload)
       if (!r.success) {
@@ -313,6 +350,16 @@ export const serializeAuditEvent = (
           after: event.after,
           ...(event.reason !== undefined ? { reason: event.reason } : {}),
         },
+      }
+    case 'group_moderator_granted':
+      return {
+        action: 'group_moderator_granted',
+        payload: { groupId: event.groupId, userId: event.userId },
+      }
+    case 'group_moderator_revoked':
+      return {
+        action: 'group_moderator_revoked',
+        payload: { groupId: event.groupId, userId: event.userId },
       }
     case 'cookie_set':
       return { action: 'cookie_set', payload: {} }

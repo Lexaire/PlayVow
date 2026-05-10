@@ -7,7 +7,7 @@ import { Pagination } from '#/components/Pagination'
 import { describeAuditEvent } from '#/components/AuditEntryRow'
 import type { AuditAction, AuditTargetType } from '#/db/schema'
 import { AUDIT_ACTIONS, AUDIT_TARGET_TYPES } from '#/db/schema'
-import { isMod } from '#/domain/roles'
+import { isAnyMod } from '#/domain/roles'
 import { fetchAuditLogPage, fetchModSession } from '#/server/modFns'
 import type { AuditEntry, AuditEntryRead } from '#/repos/auditLog'
 
@@ -23,8 +23,10 @@ type Search = z.infer<typeof SearchSchema>
 export const Route = createFileRoute('/mod/audit')({
   validateSearch: (search: Record<string, unknown>) => SearchSchema.parse(search),
   beforeLoad: async () => {
-    const { user } = await fetchModSession()
-    if (!isMod(user)) throw redirect({ to: '/login' })
+    const { user, moderatedGroupIds } = await fetchModSession()
+    if (!isAnyMod(user, new Set(moderatedGroupIds))) {
+      throw redirect({ to: '/login' })
+    }
   },
   loaderDeps: ({ search }) => ({
     page: search.page ?? 1,
@@ -62,6 +64,8 @@ const ACTION_FAMILY: Readonly<Record<AuditAction, 'win' | 'group' | 'role' | 'co
   group_updated: 'group',
   giveaway_created: 'group',
   giveaway_deleted: 'group',
+  group_moderator_granted: 'group',
+  group_moderator_revoked: 'group',
   role_granted: 'role',
   role_revoked: 'role',
   cookie_set: 'cookie',
@@ -84,6 +88,8 @@ const ACTION_LABEL: Readonly<Record<AuditAction, string>> = {
   group_updated: 'group updated',
   giveaway_created: 'giveaway created',
   giveaway_deleted: 'giveaway deleted',
+  group_moderator_granted: 'mod granted',
+  group_moderator_revoked: 'mod revoked',
   role_granted: 'role granted',
   role_revoked: 'role revoked',
   cookie_set: 'cookie set',

@@ -6,7 +6,7 @@ import { SteamIcon } from '#/components/BrandIcons'
 import { Pagination } from '#/components/Pagination'
 import { UserCreatedGiveawaysTable } from '#/components/UserCreatedGiveawaysTable'
 import { WinsTable } from '#/components/WinsTable'
-import { isMod } from '#/domain/roles'
+import { isModForGroup } from '#/domain/roles'
 import { steamAssetUrl } from '#/lib/steam-assets'
 import { fetchGamePage } from '#/server/publicFns'
 
@@ -50,10 +50,13 @@ export const Route = createFileRoute('/app/$appId')({
 function GamePage() {
   const { app, wins, giveaways, commonByWinId } = Route.useLoaderData()
   const commonMap = new Map(commonByWinId)
-  const { currentUser } = rootApi.useLoaderData()
+  const { currentUser, moderatedGroupIds } = rootApi.useLoaderData()
+  const moderatedSet = new Set(moderatedGroupIds)
+  // Cross-group page: each row's win belongs to a different group, so the
+  // mod-link predicate is per-row.
+  const canViewModWin = (groupId: number) => isModForGroup(currentUser, groupId, moderatedSet)
   const search = Route.useSearch()
   const navigate = useNavigate({ from: '/app/$appId' })
-  const userIsMod = isMod(currentUser)
   const [capsuleFailed, setCapsuleFailed] = useState(false)
   const activeTab: GameTabKey = search.tab ?? 'wins'
 
@@ -107,7 +110,7 @@ function GamePage() {
           <WinsTable
             wins={wins.rows}
             showGame={false}
-            canViewModWin={userIsMod}
+            canViewModWin={canViewModWin}
             commonByWinId={commonMap}
           />
           <Pagination

@@ -22,6 +22,8 @@ export const AUDIT_ACTIONS = [
   'giveaway_deleted',
   'role_granted',
   'role_revoked',
+  'group_moderator_granted',
+  'group_moderator_revoked',
   'cookie_set',
   'cookie_cleared',
   'cookie_tested',
@@ -42,7 +44,10 @@ export const SG_COOKIE_TEST_RESULTS = [
 ] as const
 export type SgCookieTestResult = (typeof SG_COOKIE_TEST_RESULTS)[number]
 
-export const USER_ROLES = ['user', 'moderator', 'admin'] as const
+// Two global roles: regular user and admin. Moderation is per-group via the
+// group_moderators join table — there's no global "moderator" role anymore.
+// "Is this user a mod?" is always asked in the context of a specific group.
+export const USER_ROLES = ['user', 'admin'] as const
 export type UserRole = (typeof USER_ROLES)[number]
 
 export type ProfileVisibility = 1 | 3
@@ -78,6 +83,33 @@ export const groups = sqliteTable('groups', {
   lastSteamMembersScrapedAt: timestamp('last_steam_members_scraped_at'),
   createdAt: createdAt(),
 })
+
+// Per-group moderator assignments. Granting is admin-only; presence of a row
+// here lets the user mod that group. Admins moderate every group implicitly
+// (no row required). `granted_by_user_id` records the admin who granted the
+// row for a quick audit join — the audit log is the canonical history.
+export const groupModerators = sqliteTable(
+  'group_moderators',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    groupId: integer('group_id')
+      .notNull()
+      .references(() => groups.id),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id),
+    grantedAt: timestamp('granted_at')
+      .notNull()
+      .default(sql`(unixepoch())`),
+    grantedByUserId: integer('granted_by_user_id')
+      .notNull()
+      .references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex('group_moderators_group_user_uniq').on(t.groupId, t.userId),
+    index('group_moderators_user_idx').on(t.userId),
+  ],
+)
 
 export const groupSecrets = sqliteTable('group_secrets', {
   groupId: integer('group_id')

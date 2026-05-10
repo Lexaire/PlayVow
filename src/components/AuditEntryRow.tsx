@@ -58,6 +58,10 @@ export const describeAuditEvent = (event: AuditEntry['event']): string => {
       return `Role granted: ${event.before} → ${event.after}${event.reason ? ` (${event.reason})` : ''}`
     case 'role_revoked':
       return `Role revoked: ${event.before} → ${event.after}${event.reason ? ` (${event.reason})` : ''}`
+    case 'group_moderator_granted':
+      return `Granted moderator on group ${String(event.groupId)} to user ${String(event.userId)}`
+    case 'group_moderator_revoked':
+      return `Revoked moderator on group ${String(event.groupId)} from user ${String(event.userId)}`
     case 'cookie_set':
       return 'SteamGifts cookie set'
     case 'cookie_cleared':

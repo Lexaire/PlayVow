@@ -12,14 +12,26 @@ import type {
 import { AUDIT_ACTIONS, AUDIT_TARGET_TYPES, WIN_STATUSES } from '#/db/schema'
 import { listAuditEntries } from '#/repos/auditLog'
 import type { ListAuditEntriesResult } from '#/repos/auditLog'
+import { findGroupBySlug } from '#/repos/groups'
 import { applyWinNotesUpdate, applyWinStatusChange } from '#/repos/modActions'
 import type { ModWinError, NotesUpdateOutcome, StatusChangeOutcome } from '#/repos/modActions'
+import { findGroupIdByWinId } from '#/repos/wins'
 import type { Result } from '#/lib/result'
-import { getCurrentUser, requireModerator } from '#/server/auth'
+import { err } from '#/lib/result'
+import {
+  getCurrentUser,
+  getModeratedGroupIds,
+  requireAnyModerator,
+  requireGroupModerator,
+} from '#/server/auth'
 import { DEFAULT_PAGE_SIZE, getModWinDetail, getModWinsPage } from '#/server/queries'
 import type { ModWinDetailData, ModWinsFilter } from '#/server/queries'
 
-const requireMod = async (): Promise<number> => (await requireModerator()).id
+// Most mod actions are scoped to a single group; they take a winId or slug
+// and gate via `requireGroupModerator(groupId)` derived from the input. The
+// only cross-group entry points are `fetchModSession` (which advertises
+// what the viewer can mod) and `fetchAuditLogPage` (which is intentionally
+// unfiltered — see review notes).
 
 export type CurrentUserInfo = {
   readonly id: number
@@ -29,7 +41,12 @@ export type CurrentUserInfo = {
   readonly avatarUrl: string | null
 }
 
-export type ModSessionInfo = { readonly user: CurrentUserInfo | null }
+export type ModSessionInfo = {
+  readonly user: CurrentUserInfo | null
+  // Group ids the viewer can moderate directly (admin returns an empty set
+  // here — they can mod everything; consumers special-case admin).
+  readonly moderatedGroupIds: ReadonlyArray<number>
+}
 
 const toCurrentUserInfo = (user: {
   readonly id: number
@@ -48,7 +65,11 @@ const toCurrentUserInfo = (user: {
 export const fetchModSession = createServerFn({ method: 'GET' }).handler(
   async (): Promise<ModSessionInfo> => {
     const user = await getCurrentUser()
-    return { user: user ? toCurrentUserInfo(user) : null }
+    const moderatedGroupIds = await getModeratedGroupIds(user)
+    return {
+      user: user ? toCurrentUserInfo(user) : null,
+      moderatedGroupIds: Array.from(moderatedGroupIds),
+    }
   },
 )
 
@@ -65,7 +86,9 @@ export const fetchModGroupPage = createServerFn({ method: 'GET' })
       ModGroupPageSchema.parse(input),
   )
   .handler(async ({ data }) => {
-    await requireMod()
+    const group = await findGroupBySlug(dbWrite(), data.slug)
+    if (!group) return null
+    await requireGroupModerator(group.id)
     return getModWinsPage(dbWrite(), data.slug, data.filter, data.page, data.pageSize)
   })
 
@@ -74,7 +97,9 @@ const WinIdSchema = z.object({ winId: z.number().int().positive() })
 export const fetchModWinDetail = createServerFn({ method: 'GET' })
   .inputValidator((input: { winId: number }) => WinIdSchema.parse(input))
   .handler(async ({ data }): Promise<ModWinDetailData | null> => {
-    await requireMod()
+    const groupId = await findGroupIdByWinId(dbWrite(), data.winId)
+    if (groupId === null) return null
+    await requireGroupModerator(groupId)
     return getModWinDetail(dbWrite(), data.winId)
   })
 
@@ -88,8 +113,10 @@ export const setWinStatus = createServerFn({ method: 'POST' })
     StatusChangeSchema.parse(input),
   )
   .handler(async ({ data }): Promise<Result<StatusChangeOutcome, ModWinError>> => {
-    const modUserId = await requireMod()
-    return applyWinStatusChange(dbWrite(), data.winId, data.to, new Date(), modUserId)
+    const groupId = await findGroupIdByWinId(dbWrite(), data.winId)
+    if (groupId === null) return err({ kind: 'win_not_found', winId: data.winId })
+    const mod = await requireGroupModerator(groupId)
+    return applyWinStatusChange(dbWrite(), data.winId, data.to, new Date(), mod.id)
   })
 
 const BULK_STATUS_CHANGE_LIMIT = 200
@@ -99,24 +126,46 @@ const StatusChangeBulkSchema = z.object({
   to: z.enum(WIN_STATUSES),
 })
 
+export type BulkStatusError =
+  | { readonly kind: 'unauthorized'; readonly winIds: ReadonlyArray<number> }
+  | ModWinError
+
 export type BulkStatusOutcome = {
   readonly updated: ReadonlyArray<number>
-  readonly errors: ReadonlyArray<{ readonly winId: number; readonly error: ModWinError }>
+  readonly errors: ReadonlyArray<{ readonly winId: number; readonly error: BulkStatusError }>
 }
 
+// Bulk path needs a per-win group check because a mod may be authorized for
+// some wins in the request and not others. We require admin OR mod-on-each-
+// distinct-group across the whole set; mismatches are returned per-win as
+// `unauthorized` errors so the caller can show which rows didn't apply.
 export const setWinStatusBulk = createServerFn({ method: 'POST' })
   .inputValidator((input: { winIds: number[]; to: (typeof WIN_STATUSES)[number] }) =>
     StatusChangeBulkSchema.parse(input),
   )
   .handler(async ({ data }): Promise<BulkStatusOutcome> => {
-    const modUserId = await requireMod()
+    const user = await getCurrentUser()
+    if (!user) return { updated: [], errors: data.winIds.map((winId) => ({ winId, error: { kind: 'unauthorized', winIds: [winId] } })) }
+    const moderatedGroupIds =
+      user.role === 'admin' ? null : await getModeratedGroupIds(user)
     const now = new Date()
-    const db = dbWrite()
+    const dbR = dbWrite()
     const uniqueIds = Array.from(new Set(data.winIds))
     const updated: number[] = []
-    const errors: { winId: number; error: ModWinError }[] = []
+    const errors: { winId: number; error: BulkStatusError }[] = []
     for (const winId of uniqueIds) {
-      const result = await applyWinStatusChange(db, winId, data.to, now, modUserId)
+      const groupId = await findGroupIdByWinId(dbR, winId)
+      if (groupId === null) {
+        errors.push({ winId, error: { kind: 'win_not_found', winId } })
+        continue
+      }
+      const authorized =
+        moderatedGroupIds === null || moderatedGroupIds.has(groupId)
+      if (!authorized) {
+        errors.push({ winId, error: { kind: 'unauthorized', winIds: [winId] } })
+        continue
+      }
+      const result = await applyWinStatusChange(dbR, winId, data.to, now, user.id)
       if (result.ok) updated.push(winId)
       else errors.push({ winId, error: result.error })
     }
@@ -131,8 +180,10 @@ const NotesSchema = z.object({
 export const updateWinNotesFn = createServerFn({ method: 'POST' })
   .inputValidator((input: { winId: number; notes: string | null }) => NotesSchema.parse(input))
   .handler(async ({ data }): Promise<Result<NotesUpdateOutcome, ModWinError>> => {
-    const modUserId = await requireMod()
-    return applyWinNotesUpdate(dbWrite(), data.winId, data.notes, modUserId)
+    const groupId = await findGroupIdByWinId(dbWrite(), data.winId)
+    if (groupId === null) return err({ kind: 'win_not_found', winId: data.winId })
+    const mod = await requireGroupModerator(groupId)
+    return applyWinNotesUpdate(dbWrite(), data.winId, data.notes, mod.id)
   })
 
 const AUDIT_LOG_PAGE_SIZE = 50
@@ -144,6 +195,10 @@ const AuditLogPageSchema = z.object({
   actorQuery: z.string().trim().min(1).max(64).optional(),
 })
 
+// Cross-group view; we gate on "is admin OR moderates any group" but don't
+// filter the rows. By design — the audit log is essentially public history
+// for this project, and per-group filtering would complicate the query for
+// negligible privacy benefit.
 export const fetchAuditLogPage = createServerFn({ method: 'GET' })
   .inputValidator(
     (input: {
@@ -154,7 +209,7 @@ export const fetchAuditLogPage = createServerFn({ method: 'GET' })
     }) => AuditLogPageSchema.parse(input),
   )
   .handler(async ({ data }): Promise<ListAuditEntriesResult> => {
-    await requireMod()
+    await requireAnyModerator()
     return listAuditEntries(db(), {
       page: data.page,
       pageSize: AUDIT_LOG_PAGE_SIZE,

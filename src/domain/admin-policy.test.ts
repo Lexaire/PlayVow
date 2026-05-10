@@ -2,43 +2,26 @@ import { describe, expect, it } from 'vitest'
 
 import { checkRoleChange } from '#/domain/admin-policy'
 
-const target = (id: number, role: 'user' | 'moderator' | 'admin') => ({ id, role })
+// Per-group moderation lives in the group_moderators table now; the global
+// role enum is just user/admin. Role-change tests cover the user ↔ admin
+// transitions and the self-change + env-admin gates.
+const target = (id: number, role: 'user' | 'admin') => ({ id, role })
 
 describe('checkRoleChange', () => {
   it('rejects self-change regardless of role rank', () => {
     const r = checkRoleChange({
       actorId: 1,
       target: target(1, 'admin'),
-      newRole: 'moderator',
+      newRole: 'user',
       isActorEnvAdmin: true,
     })
     expect(r).toEqual({ ok: false, error: 'self_change_forbidden' })
   })
 
-  it('lets a non-env admin promote a user to moderator', () => {
-    const r = checkRoleChange({
-      actorId: 1,
-      target: target(2, 'user'),
-      newRole: 'moderator',
-      isActorEnvAdmin: false,
-    })
-    expect(r).toEqual({ ok: true })
-  })
-
-  it('lets a non-env admin demote a moderator to user', () => {
-    const r = checkRoleChange({
-      actorId: 1,
-      target: target(2, 'moderator'),
-      newRole: 'user',
-      isActorEnvAdmin: false,
-    })
-    expect(r).toEqual({ ok: true })
-  })
-
   it('blocks a non-env admin from promoting to admin', () => {
     const r = checkRoleChange({
       actorId: 1,
-      target: target(2, 'moderator'),
+      target: target(2, 'user'),
       newRole: 'admin',
       isActorEnvAdmin: false,
     })
@@ -49,27 +32,27 @@ describe('checkRoleChange', () => {
     const r = checkRoleChange({
       actorId: 1,
       target: target(2, 'admin'),
-      newRole: 'moderator',
+      newRole: 'user',
       isActorEnvAdmin: false,
     })
     expect(r).toEqual({ ok: false, error: 'admin_change_requires_env_admin' })
   })
 
-  it('lets an env admin promote to admin', () => {
+  it('lets an env admin promote a user to admin', () => {
     const r = checkRoleChange({
       actorId: 1,
-      target: target(2, 'moderator'),
+      target: target(2, 'user'),
       newRole: 'admin',
       isActorEnvAdmin: true,
     })
     expect(r).toEqual({ ok: true })
   })
 
-  it('lets an env admin demote an admin', () => {
+  it('lets an env admin demote an admin to user', () => {
     const r = checkRoleChange({
       actorId: 1,
       target: target(2, 'admin'),
-      newRole: 'moderator',
+      newRole: 'user',
       isActorEnvAdmin: true,
     })
     expect(r).toEqual({ ok: true })

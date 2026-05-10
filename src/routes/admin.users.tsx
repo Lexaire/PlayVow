@@ -72,7 +72,12 @@ function AdminUsersPage() {
       <header className="space-y-1">
         <h1 className="text-2xl font-bold">Users</h1>
         <p className="text-sm text-neutral-600">
-          Promote or demote moderators. All changes are audit-logged.
+          Promote or demote site administrators. All changes are audit-logged. To manage
+          moderators for a specific group, go to{' '}
+          <Link to="/admin/groups" className="text-blue-700 hover:underline">
+            Groups
+          </Link>
+          .
         </p>
       </header>
 

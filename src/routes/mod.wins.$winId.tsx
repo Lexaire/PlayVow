@@ -1,4 +1,4 @@
-import { Link, createFileRoute, notFound, redirect, useRouter } from '@tanstack/react-router'
+import { Link, createFileRoute, notFound, useRouter } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
 import { useState } from 'react'
 import { z } from 'zod'
@@ -23,9 +23,8 @@ import {
   ACTION_STYLES,
   formatStatusError,
 } from '#/domain/win-status-ui'
-import { isMod } from '#/domain/roles'
 import { formatPlaytimeCompact, formatPlaytimePrecise } from '#/lib/playtime'
-import { fetchModSession, fetchModWinDetail, setWinStatus, updateWinNotesFn } from '#/server/modFns'
+import { fetchModWinDetail, setWinStatus, updateWinNotesFn } from '#/server/modFns'
 import type { MembershipStatusView, WinAuditEntry } from '#/server/queries'
 
 const ParamsSchema = z.object({ winId: z.string().regex(/^\d+$/) })
@@ -44,10 +43,8 @@ const dateTimeFormat = new Intl.DateTimeFormat('en-CA', {
 
 export const Route = createFileRoute('/mod/wins/$winId')({
   parseParams: (raw) => ParamsSchema.parse(raw),
-  beforeLoad: async () => {
-    const { user } = await fetchModSession()
-    if (!isMod(user)) throw redirect({ to: '/login' })
-  },
+  // The mod gate now lives inside fetchModWinDetail (requireGroupModerator
+  // resolves the win's group and 401s a non-mod), so beforeLoad is gone.
   loader: async ({ params }) => {
     const data = await fetchModWinDetail({ data: { winId: Number(params.winId) } })
     if (!data) throw notFound()

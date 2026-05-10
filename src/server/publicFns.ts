@@ -9,7 +9,8 @@ import type {
   SteamId,
   SteamSubId,
 } from '#/db/schema'
-import { isMod } from '#/domain/roles'
+import { isAdmin } from '#/domain/roles'
+import { listGroupIdsModeratedByUser } from '#/repos/groupModerators'
 import { createTtlCache } from '#/lib/ttl-cache'
 import { findUserBySteamId } from '#/repos/users'
 import { getCurrentUser } from '#/server/auth'
@@ -101,13 +102,16 @@ export const fetchUserPageByUsername = createServerFn({ method: 'GET' })
   )
   .handler(async ({ data }) => {
     // Mods need fresh status (their own changes are visible immediately, and
-    // they coordinate with each other), so bypass the public TTL cache and the
-    // read-replica when the viewer is a moderator+. Public viewers stay on the
-    // cached/replica path.
+    // they coordinate with each other), so bypass the public TTL cache and
+    // the read-replica when the viewer is admin OR moderates any group.
+    // Public viewers stay on the cached/replica path.
     const viewer = await getCurrentUser()
+    const viewerIsMod =
+      viewer !== null &&
+      (isAdmin(viewer) || (await listGroupIdsModeratedByUser(db(), viewer.id)).size > 0)
     const fetch = () =>
       getUserPageDataByUsername(
-        isMod(viewer) ? dbWrite() : db(),
+        viewerIsMod ? dbWrite() : db(),
         data.username as SteamGiftsUsername,
         data.winsPages,
         data.createdWinsPages,
@@ -115,7 +119,7 @@ export const fetchUserPageByUsername = createServerFn({ method: 'GET' })
         data.pageSize,
         new Date(),
       )
-    if (isMod(viewer)) return fetch()
+    if (viewerIsMod) return fetch()
     // Lowercase username so case variants share a cache slot — getUserPageData
     // already does a case-insensitive lookup, so this is purely keying.
     const key = [

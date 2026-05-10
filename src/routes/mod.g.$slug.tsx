@@ -1,4 +1,4 @@
-import { Link, createFileRoute, notFound, redirect } from '@tanstack/react-router'
+import { Link, createFileRoute, notFound } from '@tanstack/react-router'
 import { z } from 'zod'
 
 import { CameraIcon, SteamIcon } from '#/components/BrandIcons'
@@ -9,8 +9,7 @@ import { UserProfileLink, userDisplayName } from '#/components/UserProfileLink'
 import { renderAchievements, renderCommonAchievements } from '#/components/WinsTable'
 import type { CommonAchievementProgress } from '#/domain/achievement-criteria'
 import { formatPlaytimeCompact, formatPlaytimePrecise } from '#/lib/playtime'
-import { isMod } from '#/domain/roles'
-import { fetchModGroupPage, fetchModSession } from '#/server/modFns'
+import { fetchModGroupPage } from '#/server/modFns'
 
 // Mod views pin to UTC for moderator consistency. Listing cells stay
 // label-free for visual density; the per-win detail page shows the TZ.
@@ -30,14 +29,14 @@ const SearchSchema = z.object({
 
 export const Route = createFileRoute('/mod/g/$slug')({
   validateSearch: SearchSchema,
-  beforeLoad: async () => {
-    const { user } = await fetchModSession()
-    if (!isMod(user)) throw redirect({ to: '/login' })
-  },
   loaderDeps: ({ search }) => ({
     filter: search.filter ?? 'all',
     page: search.page ?? 1,
   }),
+  // The mod gate now lives inside fetchModGroupPage (requireGroupModerator
+  // resolves the group from the slug), so a non-mod hitting this URL gets
+  // redirected by the server fn rather than via beforeLoad. Saves the
+  // double round trip and keeps auth logic in one place.
   loader: async ({ params, deps }) => {
     const data = await fetchModGroupPage({
       data: { slug: params.slug, filter: deps.filter, page: deps.page },

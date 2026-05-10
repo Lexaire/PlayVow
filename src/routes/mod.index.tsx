@@ -1,18 +1,31 @@
 import { Link, createFileRoute, redirect } from '@tanstack/react-router'
 
 import { ModSubNav } from '#/components/ModSubNav'
-import { isMod } from '#/domain/roles'
+import { isAnyMod } from '#/domain/roles'
 import { fetchGroupSummaries } from '#/server/publicFns'
 import { fetchModSession } from '#/server/modFns'
 
 export const Route = createFileRoute('/mod/')({
   beforeLoad: async () => {
-    const { user } = await fetchModSession()
-    if (!isMod(user)) throw redirect({ to: '/login' })
+    const { user, moderatedGroupIds } = await fetchModSession()
+    // Admin satisfies "any mod"; non-admin needs at least one row in
+    // group_moderators. moderatedGroupIds is empty for admins (we don't
+    // populate it on that path), so isAnyMod short-circuits on role.
+    if (!isAnyMod(user, new Set(moderatedGroupIds))) {
+      throw redirect({ to: '/login' })
+    }
   },
   loader: async () => {
-    const groups = await fetchGroupSummaries()
-    return { groups }
+    const [{ user, moderatedGroupIds }, groups] = await Promise.all([
+      fetchModSession(),
+      fetchGroupSummaries(),
+    ])
+    // Admin sees every group; non-admin sees only the groups they moderate.
+    const visible =
+      user?.role === 'admin'
+        ? groups
+        : groups.filter((g) => moderatedGroupIds.includes(g.id))
+    return { groups: visible }
   },
   component: ModIndex,
 })

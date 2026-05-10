@@ -1,14 +1,25 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 
+import { env } from '#/config/env'
 import { db, dbWrite, withTransaction } from '#/db/client'
 import type {
   GroupSource,
   SteamGiftsGroupCode,
+  SteamGiftsUsername,
   SteamGroupId,
+  SteamId,
 } from '#/db/schema'
 import { GROUP_SOURCES } from '#/db/schema'
+import type { ResolveVanityError } from '#/external/steam-api'
+import { createSteamApiClient, extractVanityHandle } from '#/external/steam-api'
 import { writeAuditEvent } from '#/repos/auditLog'
+import {
+  addGroupModerator,
+  listModeratorsOfGroup,
+  removeGroupModerator,
+  type GroupModeratorView,
+} from '#/repos/groupModerators'
 import type { Group } from '#/repos/groups'
 import {
   createGroup,
@@ -17,6 +28,7 @@ import {
   listGroups,
   updateGroup,
 } from '#/repos/groups'
+import { upsertUserBySteamId } from '#/repos/users'
 import type { Result } from '#/lib/result'
 import { err, ok } from '#/lib/result'
 import { requireAdmin } from '#/server/auth'
@@ -219,4 +231,168 @@ export const updateGroupFn = createServerFn({ method: 'POST' })
       return row
     })
     return ok(toAdminGroupRow(updated))
+  })
+
+// ----- Group moderator management ---------------------------------------
+
+// Lazy server-side Steam client — admin actions are rare so the fresh
+// instance is fine. Mirrors the pattern in manualGroupFns; if a third
+// caller appears, hoist this into a shared module.
+let steamClient: ReturnType<typeof createSteamApiClient> | undefined
+
+const getSteamClient = (): ReturnType<typeof createSteamApiClient> => {
+  if (!steamClient) {
+    steamClient = createSteamApiClient({ apiKey: env.STEAM_WEB_API_KEY })
+  }
+  return steamClient
+}
+
+const STEAM_ID_PATTERN = /^7656\d{13}$/
+const PROFILES_URL_PATTERN = /steamcommunity\.com\/profiles\/(7656\d{13})/i
+
+export type SteamUserResolveError =
+  | { readonly kind: 'invalid_input' }
+  | { readonly kind: 'vanity_failed'; readonly cause: ResolveVanityError }
+
+const resolveSteamIdFromInput = async (
+  input: string,
+): Promise<Result<SteamId, SteamUserResolveError>> => {
+  const trimmed = input.trim()
+  if (trimmed.length === 0) return err({ kind: 'invalid_input' })
+  if (STEAM_ID_PATTERN.test(trimmed)) return ok(trimmed as SteamId)
+  const profilesMatch = PROFILES_URL_PATTERN.exec(trimmed)
+  if (profilesMatch?.[1]) return ok(profilesMatch[1] as SteamId)
+  if (extractVanityHandle(trimmed) === null) return err({ kind: 'invalid_input' })
+  const r = await getSteamClient().resolveVanityUrl(trimmed)
+  if (!r.ok) return err({ kind: 'vanity_failed', cause: r.error })
+  return ok(r.value)
+}
+
+export type AdminGroupModeratorRow = {
+  readonly userId: number
+  readonly steamgiftsUsername: SteamGiftsUsername | null
+  readonly steamId: SteamId | null
+  readonly avatarUrl: string | null
+  readonly grantedAt: Date
+  readonly grantedByUserId: number
+}
+
+const toAdminModeratorRow = (m: GroupModeratorView): AdminGroupModeratorRow => ({
+  userId: m.userId,
+  steamgiftsUsername: m.steamgiftsUsername,
+  steamId: m.steamId,
+  avatarUrl: m.avatarUrl,
+  grantedAt: m.grantedAt,
+  grantedByUserId: m.grantedByUserId,
+})
+
+const GroupIdSchema = z.object({ groupId: z.number().int().positive() })
+
+export const listGroupModeratorsFn = createServerFn({ method: 'GET' })
+  .inputValidator((input: { groupId: number }) => GroupIdSchema.parse(input))
+  .handler(async ({ data }): Promise<ReadonlyArray<AdminGroupModeratorRow>> => {
+    await requireAdmin()
+    const rows = await listModeratorsOfGroup(db(), data.groupId)
+    return rows.map(toAdminModeratorRow)
+  })
+
+const AddModeratorSchema = z.object({
+  groupId: z.number().int().positive(),
+  identifier: z.string().trim().min(1).max(200),
+})
+
+export type AddGroupModeratorError =
+  | { readonly kind: 'group_not_found' }
+  | { readonly kind: 'already_moderator' }
+  | SteamUserResolveError
+
+export type AddGroupModeratorResult = {
+  readonly userId: number
+}
+
+export const addGroupModeratorFn = createServerFn({ method: 'POST' })
+  .inputValidator((input: { groupId: number; identifier: string }) =>
+    AddModeratorSchema.parse(input),
+  )
+  .handler(
+    async ({ data }): Promise<Result<AddGroupModeratorResult, AddGroupModeratorError>> => {
+      const admin = await requireAdmin()
+      const group = await findGroupById(db(), data.groupId)
+      if (!group) return err({ kind: 'group_not_found' })
+
+      const idR = await resolveSteamIdFromInput(data.identifier)
+      if (!idR.ok) return err(idR.error)
+
+      const now = new Date()
+      const result = await withTransaction(dbWrite(), async (tx) => {
+        // upsert ensures the user row exists even if they've never logged
+        // in; the row is keyed on steam_id so the next time they sign in
+        // it'll resolve to the same id. SG username stays null until a
+        // scrape resolves them.
+        const user = await upsertUserBySteamId(tx, {
+          steamId: idR.value,
+          lastSyncedAt: now,
+        })
+        const inserted = await addGroupModerator(tx, {
+          groupId: group.id,
+          userId: user.id,
+          grantedByUserId: admin.id,
+        })
+        if (!inserted) {
+          return { kind: 'duplicate' as const, userId: user.id }
+        }
+        await writeAuditEvent(tx, {
+          actorUserId: admin.id,
+          targetType: 'group',
+          targetId: group.id,
+          event: {
+            kind: 'group_moderator_granted',
+            groupId: group.id,
+            userId: user.id,
+          },
+        })
+        return { kind: 'inserted' as const, userId: user.id }
+      })
+
+      if (result.kind === 'duplicate') return err({ kind: 'already_moderator' })
+      return ok({ userId: result.userId })
+    },
+  )
+
+const RemoveModeratorSchema = z.object({
+  groupId: z.number().int().positive(),
+  userId: z.number().int().positive(),
+})
+
+export type RemoveGroupModeratorError =
+  | { readonly kind: 'group_not_found' }
+  | { readonly kind: 'not_a_moderator' }
+
+export const removeGroupModeratorFn = createServerFn({ method: 'POST' })
+  .inputValidator((input: { groupId: number; userId: number }) =>
+    RemoveModeratorSchema.parse(input),
+  )
+  .handler(async ({ data }): Promise<Result<{ userId: number }, RemoveGroupModeratorError>> => {
+    const admin = await requireAdmin()
+    const group = await findGroupById(db(), data.groupId)
+    if (!group) return err({ kind: 'group_not_found' })
+
+    const result = await withTransaction(dbWrite(), async (tx) => {
+      const removed = await removeGroupModerator(tx, group.id, data.userId)
+      if (!removed) return { kind: 'not_found' as const }
+      await writeAuditEvent(tx, {
+        actorUserId: admin.id,
+        targetType: 'group',
+        targetId: group.id,
+        event: {
+          kind: 'group_moderator_revoked',
+          groupId: group.id,
+          userId: data.userId,
+        },
+      })
+      return { kind: 'removed' as const }
+    })
+
+    if (result.kind === 'not_found') return err({ kind: 'not_a_moderator' })
+    return ok({ userId: data.userId })
   })

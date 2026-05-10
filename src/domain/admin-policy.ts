@@ -3,6 +3,10 @@ import type { UserRole } from '#/db/schema'
 // The two policy gates an admin's role-change attempt has to pass before it
 // reaches the DB. Pure function — server fn (`setUserRoleFn`) and any future
 // caller route through this so the rules live in one place.
+//
+// Post-per-group-mods, the only role transition is user ↔ admin: the
+// "moderator" role is gone, and per-group moderation lives in the
+// group_moderators table (granted via groupAdminFns, not setUserRoleFn).
 export type RoleChangeError = 'self_change_forbidden' | 'admin_change_requires_env_admin'
 
 export type RoleChangeCheck =
@@ -18,9 +22,10 @@ export const checkRoleChange = (params: {
   if (params.actorId === params.target.id) {
     return { ok: false, error: 'self_change_forbidden' }
   }
-  // Touching the admin role at all (promote-to or demote-from) requires the
-  // actor to be on the env-admin list. Non-env admins are limited to the
-  // user ↔ moderator axis.
+  // Promoting to or demoting from admin is restricted to env-admins (those
+  // listed in ADMIN_STEAM_IDS). Non-env admins can't grant admin to anyone
+  // — they only exist to delegate operational work, not to widen the
+  // super-admin set.
   if ((params.target.role === 'admin' || params.newRole === 'admin') && !params.isActorEnvAdmin) {
     return { ok: false, error: 'admin_change_requires_env_admin' }
   }

@@ -62,6 +62,22 @@ export const findWinById = async (db: DbOrTx, id: number): Promise<Win | null> =
   return row ?? null
 }
 
+// Cheap lookup used by mod-fn auth gates: given a winId, return the
+// groupId so the caller can run requireGroupModerator(groupId) before
+// loading the rest of the win data. Returns null if the win doesn't exist.
+export const findGroupIdByWinId = async (
+  db: DbOrTx,
+  winId: number,
+): Promise<number | null> => {
+  const [row] = await db
+    .select({ groupId: giveaways.groupId })
+    .from(wins)
+    .innerJoin(giveaways, eq(giveaways.id, wins.giveawayId))
+    .where(eq(wins.id, winId))
+    .limit(1)
+  return row?.groupId ?? null
+}
+
 export const findWinByGiveawayAndUser = async (
   db: DbOrTx,
   giveawayId: number,

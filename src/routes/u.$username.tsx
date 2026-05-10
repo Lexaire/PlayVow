@@ -12,7 +12,7 @@ import { UserCreatedGiveawaysTable } from '#/components/UserCreatedGiveawaysTabl
 import { WinsTable, type WinsTableSelection } from '#/components/WinsTable'
 import type { WinStatus } from '#/db/schema'
 import { WIN_STATUSES } from '#/db/schema'
-import { isMod } from '#/domain/roles'
+import { isModForGroup } from '#/domain/roles'
 import { fetchUserPageByUsername } from '#/server/publicFns'
 import type { CreatorStats, Page, UserCreatedGiveawayView, WinView } from '#/server/queries'
 
@@ -109,11 +109,20 @@ function UserPage() {
   // post-manual-groups.
   const username = user.steamgiftsUsername ?? params.username
   const commonMap = useMemo(() => new Map(commonByWinId), [commonByWinId])
-  const { currentUser } = rootApi.useLoaderData()
+  const { currentUser, moderatedGroupIds } = rootApi.useLoaderData()
+  const moderatedSet = useMemo(() => new Set(moderatedGroupIds), [moderatedGroupIds])
   const search = Route.useSearch()
   const navigate = useNavigate({ from: '/u/$username' })
   const isOwnProfile = currentUser?.id === user.id
-  const canEditStatus = isMod(currentUser ?? null)
+  // Wins on this profile span every group; status-edit permission is
+  // per-row (admin → always; otherwise the viewer's moderated groups only).
+  const canEditStatus = (groupId: number) =>
+    isModForGroup(currentUser, groupId, moderatedSet)
+  // Coarse "is the viewer a mod somewhere?" check: drives whether the
+  // bulk selection bar + checkboxes show up at all. The per-row predicate
+  // gates which rows are actually editable.
+  const viewerCanModerateSomewhere =
+    currentUser?.role === 'admin' || moderatedSet.size > 0
   const totalWins = WIN_STATUSES.reduce((acc, s) => acc + winsByStatus[s].total, 0)
   const activeTab: ProfileTabKey = search.tab ?? 'wins'
 
@@ -150,7 +159,7 @@ function UserPage() {
     setSelectedIds(new Set())
   }, [])
 
-  const selection: WinsTableSelection | undefined = canEditStatus
+  const selection: WinsTableSelection | undefined = viewerCanModerateSomewhere
     ? { selectedIds, onToggle, onToggleAll }
     : undefined
 
@@ -256,7 +265,7 @@ function UserPage() {
           commonByWinId={commonMap}
         />
       )}
-      {canEditStatus ? (
+      {viewerCanModerateSomewhere ? (
         <BulkStatusBar
           selectedIds={selectedIds}
           sourceStatuses={sourceStatuses}
@@ -277,7 +286,7 @@ function MyWinsPanel({
 }: {
   readonly winsByStatus: Readonly<Record<WinStatus, Page<WinView>>>
   readonly username: string
-  readonly canEditStatus: boolean
+  readonly canEditStatus: (groupId: number) => boolean
   readonly selection?: WinsTableSelection | undefined
   readonly commonByWinId: ReadonlyMap<number, CommonAchievementProgress>
 }) {
@@ -334,7 +343,7 @@ function MyGiveawaysPanel({
   readonly noWinnersGiveaways: Page<UserCreatedGiveawayView>
   readonly creatorStats: CreatorStats
   readonly username: string
-  readonly canEditStatus: boolean
+  readonly canEditStatus: (groupId: number) => boolean
   readonly selection?: WinsTableSelection | undefined
   readonly commonByWinId: ReadonlyMap<number, CommonAchievementProgress>
 }) {

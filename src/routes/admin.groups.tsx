@@ -3,6 +3,7 @@ import { useServerFn } from '@tanstack/react-start'
 import { useState } from 'react'
 
 import { AdminTabs } from '#/components/admin/AdminTabs'
+import { GroupModeratorsPanel } from '#/components/admin/GroupModeratorsPanel'
 import { GROUP_SOURCES } from '#/db/schema'
 import type { GroupSource } from '#/db/schema'
 import type { AdminGroupRow, CreateGroupError, UpdateGroupError } from '#/server/groupAdminFns'
@@ -145,26 +146,29 @@ function AdminGroupsPage() {
       </div>
 
       {editingId !== null && (
-        <EditGroupForm
-          group={groups.find((g) => g.id === editingId)!}
-          onSubmit={async (form) => {
-            setPending(true)
-            setEditError(null)
-            try {
-              const r = await updateGroup({ data: form })
-              if (!r.ok) {
-                setEditError(formatUpdateError(r.error))
-                return
+        <div className="space-y-4">
+          <EditGroupForm
+            group={groups.find((g) => g.id === editingId)!}
+            onSubmit={async (form) => {
+              setPending(true)
+              setEditError(null)
+              try {
+                const r = await updateGroup({ data: form })
+                if (!r.ok) {
+                  setEditError(formatUpdateError(r.error))
+                  return
+                }
+                setEditingId(null)
+                await router.invalidate()
+              } finally {
+                setPending(false)
               }
-              setEditingId(null)
-              await router.invalidate()
-            } finally {
-              setPending(false)
-            }
-          }}
-          pending={pending}
-          error={editError}
-        />
+            }}
+            pending={pending}
+            error={editError}
+          />
+          <GroupModeratorsPanel groupId={editingId} />
+        </div>
       )}
     </div>
   )

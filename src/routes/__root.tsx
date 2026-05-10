@@ -25,20 +25,33 @@ export const Route = createRootRoute({
     ],
   }),
   loader: async () => {
-    const [groups, { user }] = await Promise.all([fetchGroupSummaries(), fetchModSession()])
-    return { groups, currentUser: user }
+    const [groups, session] = await Promise.all([fetchGroupSummaries(), fetchModSession()])
+    return {
+      groups,
+      currentUser: session.user,
+      // Group ids the viewer can moderate (admins return an empty array
+      // here — they can mod everything, consumers special-case role).
+      // Made available to every route via rootApi.useLoaderData() so
+      // table components can decide per-row whether to show mod links.
+      moderatedGroupIds: session.moderatedGroupIds,
+    }
   },
   component: RootComponent,
   shellComponent: RootDocument,
 })
 
 function RootComponent() {
-  const { groups, currentUser } = Route.useLoaderData()
+  const { groups, currentUser, moderatedGroupIds } = Route.useLoaderData()
   const params = useParams({ strict: false }) as { slug?: string }
   return (
     <>
       <PostHogTracker currentUser={currentUser} />
-      <AppLayout groups={groups} activeSlug={params.slug ?? null} currentUser={currentUser}>
+      <AppLayout
+        groups={groups}
+        activeSlug={params.slug ?? null}
+        currentUser={currentUser}
+        moderatedGroupIds={moderatedGroupIds}
+      >
         <Outlet />
       </AppLayout>
     </>

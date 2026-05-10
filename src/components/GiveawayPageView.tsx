@@ -6,7 +6,7 @@ import { SteamGiftsIcon, SteamIcon } from '#/components/BrandIcons'
 import { CreatorLink } from '#/components/giveaway-row'
 import { LocalDate } from '#/components/LocalDate'
 import { WinsTable } from '#/components/WinsTable'
-import { isAdmin, isMod } from '#/domain/roles'
+import { isAdmin, isModForGroup } from '#/domain/roles'
 import { steamAssetUrl } from '#/lib/steam-assets'
 import type { GiveawayPageData } from '#/server/queries'
 
@@ -15,8 +15,13 @@ const rootApi = getRouteApi('__root__')
 export function GiveawayPageView({ data }: { readonly data: GiveawayPageData }) {
   const { group, giveaway, wins, commonByWinId } = data
   const commonMap = new Map(commonByWinId)
-  const { currentUser } = rootApi.useLoaderData()
-  const userIsMod = isMod(currentUser)
+  const { currentUser, moderatedGroupIds } = rootApi.useLoaderData()
+  const moderatedSet = new Set(moderatedGroupIds)
+  // Per-row mod-link predicate (admin → always; otherwise only this
+  // viewer's moderated groups). The view is single-group so we can
+  // pre-bind the groupId.
+  const canModerateThisGroup = isModForGroup(currentUser, group.id, moderatedSet)
+  const canViewModWin = (_groupId: number) => canModerateThisGroup
   // Soft delete is admin-only and only meaningful for manual giveaways
   // (SG-scraped ones would just come back on the next scrape).
   const canDelete = isAdmin(currentUser ?? null) && group.source === 'manual'
@@ -134,7 +139,7 @@ export function GiveawayPageView({ data }: { readonly data: GiveawayPageData }) 
           <WinsTable
             wins={wins}
             showGame={false}
-            canViewModWin={userIsMod}
+            canViewModWin={canViewModWin}
             commonByWinId={commonMap}
           />
         ) : (

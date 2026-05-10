@@ -130,15 +130,15 @@ describe('usersRepo', () => {
 
     const r = await setUserRole(db, {
       userId: target.id,
-      newRole: 'moderator',
+      newRole: 'admin',
       actorUserId: actor.id,
     })
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.value).toEqual({ before: 'user', after: 'moderator' })
+    expect(r.value).toEqual({ before: 'user', after: 'admin' })
 
     const refreshed = await findUserBySteamId(db, STEAM_A)
-    expect(refreshed?.role).toBe('moderator')
+    expect(refreshed?.role).toBe('admin')
 
     const { listAuditEntriesForTarget } = await import('#/repos/auditLog')
     const audit = await listAuditEntriesForTarget(db, 'user', target.id, 10)
@@ -155,12 +155,12 @@ describe('usersRepo', () => {
     await setUserRole(db, { userId: target.id, newRole: 'admin', actorUserId: actor.id })
     const r = await setUserRole(db, {
       userId: target.id,
-      newRole: 'moderator',
+      newRole: 'user',
       actorUserId: actor.id,
     })
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.value).toEqual({ before: 'admin', after: 'moderator' })
+    expect(r.value).toEqual({ before: 'admin', after: 'user' })
 
     const { listAuditEntriesForTarget } = await import('#/repos/auditLog')
     const audit = await listAuditEntriesForTarget(db, 'user', target.id, 10)

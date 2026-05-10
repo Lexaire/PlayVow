@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { useState, useRef, useEffect, type ReactNode } from 'react'
 
-import { isAdmin, isMod } from '#/domain/roles'
+import { isAdmin, isAnyMod } from '#/domain/roles'
 import type { CurrentUserInfo } from '#/server/modFns'
 import type { GroupSummary } from '#/server/queries'
 
@@ -9,14 +9,18 @@ export function AppLayout({
   groups,
   activeSlug,
   currentUser,
+  moderatedGroupIds,
   children,
 }: {
   readonly groups: ReadonlyArray<GroupSummary>
   readonly activeSlug: string | null
   readonly currentUser: CurrentUserInfo | null
+  // Group ids the viewer can moderate. Empty for admins (who see /mod
+  // unconditionally) and for users with no per-group grants.
+  readonly moderatedGroupIds: ReadonlyArray<number>
   readonly children: ReactNode
 }) {
-  const userIsMod = isMod(currentUser)
+  const userIsMod = isAnyMod(currentUser, new Set(moderatedGroupIds))
   const userIsAdmin = isAdmin(currentUser)
   return (
     <div className="min-h-screen bg-surface-muted text-neutral-900">

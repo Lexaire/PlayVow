@@ -3,7 +3,6 @@ import { USER_ROLES } from '#/db/schema'
 
 export const ROLE_PILL: Readonly<Record<UserRole, string>> = {
   user: 'bg-neutral-100 text-neutral-700',
-  moderator: 'bg-amber-100 text-amber-800',
   admin: 'bg-rose-100 text-rose-800',
 }
 

@@ -302,20 +302,26 @@ export type WinsTableSelection = {
   readonly onToggleAll: (winIds: ReadonlyArray<number>, select: boolean) => void
 }
 
+// Per-row mod-permission predicate. Pages compute it from the viewer's
+// role + their moderatedGroupIds set (admin → always true; otherwise
+// `moderatedGroupIds.has(groupId)`). Default `() => false` keeps mod
+// affordances hidden when the prop is omitted.
+const denyAll = () => false
+
 export function WinsTable({
   wins,
   showWinner = true,
   showGame = true,
-  canEditStatus = false,
-  canViewModWin = false,
+  canEditStatus = denyAll,
+  canViewModWin = denyAll,
   selection,
   commonByWinId,
 }: {
   readonly wins: ReadonlyArray<WinView>
   readonly showWinner?: boolean
   readonly showGame?: boolean
-  readonly canEditStatus?: boolean
-  readonly canViewModWin?: boolean
+  readonly canEditStatus?: (groupId: number) => boolean
+  readonly canViewModWin?: (groupId: number) => boolean
   readonly selection?: WinsTableSelection | undefined
   // Optional per-win community-common achievement progress, keyed by win id.
   // Pages that want to surface the YIRG criterion (currently mod surfaces +
@@ -324,6 +330,9 @@ export function WinsTable({
   // this yet" state.
   readonly commonByWinId?: ReadonlyMap<number, CommonAchievementProgress> | undefined
 }) {
+  // Cheap check used to decide whether to render the "Mod" column header.
+  // The header shows if any visible win is moderable by the viewer.
+  const anyCanViewMod = wins.some((w) => canViewModWin(w.giveaway.groupId))
   if (wins.length === 0) {
     return <p className="text-sm text-neutral-600">No wins.</p>
   }
@@ -358,8 +367,8 @@ export function WinsTable({
             win={w}
             showGame={showGame}
             showWinner={showWinner}
-            canEditStatus={canEditStatus}
-            canViewModWin={canViewModWin}
+            canEditStatus={canEditStatus(w.giveaway.groupId)}
+            canViewModWin={canViewModWin(w.giveaway.groupId)}
             isSelected={selection?.selectedIds.has(w.id) ?? false}
             onToggle={selection?.onToggle}
             commonAchievements={commonByWinId?.get(w.id)}
@@ -397,7 +406,7 @@ export function WinsTable({
               <th className="whitespace-nowrap px-3 py-0" aria-label="Screenshots">
                 <CameraIcon />
               </th>
-              {canViewModWin ? <th className="w-12 px-3 py-0">Mod</th> : null}
+              {anyCanViewMod ? <th className="w-12 px-3 py-0">Mod</th> : null}
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-100">
@@ -416,7 +425,7 @@ export function WinsTable({
                   </td>
                 ) : null}
                 <td className="w-28 px-3 py-0">
-                  {canEditStatus ? (
+                  {canEditStatus(w.giveaway.groupId) ? (
                     <StatusPillEditor winId={w.id} status={w.status} />
                   ) : (
                     <StatusBadge status={w.status} />
@@ -478,15 +487,17 @@ export function WinsTable({
                 <td className="whitespace-nowrap px-3 py-0 text-neutral-700">
                   {renderScreenshots(w)}
                 </td>
-                {canViewModWin ? (
+                {anyCanViewMod ? (
                   <td className="w-12 whitespace-nowrap px-3 py-0">
-                    <Link
-                      to="/mod/wins/$winId"
-                      params={{ winId: String(w.id) }}
-                      className="text-blue-700 hover:underline"
-                    >
-                      view
-                    </Link>
+                    {canViewModWin(w.giveaway.groupId) ? (
+                      <Link
+                        to="/mod/wins/$winId"
+                        params={{ winId: String(w.id) }}
+                        className="text-blue-700 hover:underline"
+                      >
+                        view
+                      </Link>
+                    ) : null}
                   </td>
                 ) : null}
               </tr>

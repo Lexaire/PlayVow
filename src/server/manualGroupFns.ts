@@ -21,7 +21,7 @@ import type { Win } from '#/repos/wins'
 import { insertWinIfAbsent } from '#/repos/wins'
 import type { Result } from '#/lib/result'
 import { err, ok } from '#/lib/result'
-import { requireAdmin, requireModerator } from '#/server/auth'
+import { requireAdmin, requireGroupModerator } from '#/server/auth'
 
 // Server-side Steam client — built lazily because admin/mod actions are rare
 // compared to worker-driven calls. No rate limiting wrapper: each manual
@@ -126,10 +126,13 @@ const resolveItem = async (
 export const addManualGiveawayFn = createServerFn({ method: 'POST' })
   .inputValidator((input: z.infer<typeof AddGiveawaySchema>) => AddGiveawaySchema.parse(input))
   .handler(async ({ data }): Promise<Result<AddManualGiveawayResult, AddManualGiveawayError>> => {
-    const mod = await requireModerator()
     const group = await findGroupById(db(), data.groupId)
     if (!group) return err({ kind: 'group_not_found' })
     if (group.source !== 'manual') return err({ kind: 'group_not_manual' })
+    // Group-scoped mod gate runs after the existence check so a non-mod
+    // probing for a group's existence doesn't get a different shape than
+    // a real moderator hitting a missing id.
+    const mod = await requireGroupModerator(group.id)
 
     const itemR = await resolveItem(data.item)
     if (!itemR.ok) return err(itemR.error)
