@@ -38,7 +38,8 @@ export const JOB_CATALOGUE: ReadonlyArray<JobCatalogueEntry> = [
   {
     name: 'poll_playtime',
     cron: '0 * * * *',
-    description: 'Poll Steam playtime and achievement progress for pending wins.',
+    description:
+      'Poll Steam playtime + achievements for pending wins; refresh resolved wins on a per-id-spread cadence (~14d fresh, ~30d after 1y) and piggyback playtime updates on the same getOwnedGames call.',
     expectedIntervalMs: 90 * 60 * 1000,
   },
   {

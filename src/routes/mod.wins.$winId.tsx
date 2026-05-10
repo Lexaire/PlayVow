@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { AuditEntryRow } from '#/components/AuditEntryRow'
 import { SteamGiftsIcon, SteamIcon } from '#/components/BrandIcons'
 import { GameActivityFeed } from '#/components/GameActivityFeed'
-import { LocalDate } from '#/components/LocalDate'
+import { LocalDate, LocalDateTime } from '#/components/LocalDate'
 import { PlaytimeAchievementsChart } from '#/components/PlaytimeAchievementsChart'
 import { UserProfileLink } from '#/components/UserProfileLink'
 import {
@@ -28,18 +28,6 @@ import { fetchModWinDetail, setWinStatus, updateWinNotesFn } from '#/server/modF
 import type { MembershipStatusView, WinAuditEntry } from '#/server/queries'
 
 const ParamsSchema = z.object({ winId: z.string().regex(/^\d+$/) })
-
-// Mod views pin to UTC so moderators across timezones see the same number when
-// coordinating, and the label removes ambiguity.
-const dateTimeFormat = new Intl.DateTimeFormat('en-CA', {
-  year: 'numeric',
-  month: 'short',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  timeZone: 'UTC',
-  timeZoneName: 'short',
-})
 
 export const Route = createFileRoute('/mod/wins/$winId')({
   parseParams: (raw) => ParamsSchema.parse(raw),
@@ -181,11 +169,11 @@ function ModWinDetailPage() {
         </div>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4">
           <dt className="text-neutral-500">Won</dt>
-          <dd>{dateTimeFormat.format(win.wonAt)}</dd>
+          <dd><LocalDateTime date={win.wonAt} /></dd>
           <dt className="text-neutral-500">Deadline</dt>
-          <dd>{dateTimeFormat.format(win.playDeadline)}</dd>
+          <dd><LocalDateTime date={win.playDeadline} /></dd>
           <dt className="text-neutral-500">Resolved</dt>
-          <dd>{win.resolvedAt ? dateTimeFormat.format(win.resolvedAt) : '—'}</dd>
+          <dd>{win.resolvedAt ? <LocalDateTime date={win.resolvedAt} /> : '—'}</dd>
           <dt className="text-neutral-500">Playtime baseline</dt>
           <dd>{renderPlaytimeCell(win.playtimeAtWinMinutes)}</dd>
           <dt className="text-neutral-500">Playtime current</dt>

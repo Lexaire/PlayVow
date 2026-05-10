@@ -1,15 +1,6 @@
+import { LocalDateTime } from '#/components/LocalDate'
 import { formatPlaytimeCompact, formatPlaytimePrecise } from '#/lib/playtime'
 import type { AchievementUnlockView, WinObservationView } from '#/server/queries'
-
-const dateTimeFormat = new Intl.DateTimeFormat('en-CA', {
-  year: 'numeric',
-  month: 'short',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  timeZone: 'UTC',
-  timeZoneName: 'short',
-})
 
 type ObservationEntry = {
   readonly kind: 'observation'
@@ -100,7 +91,7 @@ export function GameActivityFeed({
               )}
             </div>
             <div className="whitespace-nowrap text-xs text-neutral-500">
-              {dateTimeFormat.format(entry.at)}
+              <LocalDateTime date={entry.at} />
             </div>
           </div>
         </li>

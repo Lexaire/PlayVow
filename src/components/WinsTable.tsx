@@ -31,14 +31,15 @@ const commonAchievementsTooltip = (progress: {
 // count (how many community-common achievements exist), not how many this
 // user unlocked — that signal is carried by the achievements link going
 // green. Renders nothing when undefined (no data passed) or when the
-// criterion doesn't apply (no_achievements / no_percent_data / 0 qualify).
+// criterion doesn't apply (no_achievements / no_percent_data). A computed
+// zero is real information ("the median player unlocks nothing") so we
+// render "(0 minimum)" rather than hiding it.
 const renderCommonAchievementBadge = (
   progress: CommonAchievementProgress | undefined,
 ): ReactNode => {
   if (progress === undefined) return null
   if (progress.status === 'no_achievements') return null
   if (progress.status === 'no_percent_data') return null
-  if (progress.total === 0) return null
   return (
     <span className="text-xs text-neutral-500" title={commonAchievementsTooltip(progress)}>
       ({String(progress.total)} minimum)
@@ -49,8 +50,8 @@ const renderCommonAchievementBadge = (
 // Verbose variant used in the mod detail dl row. Same data, fuller styling.
 // Three display states: render nothing for 'no_achievements' (criterion
 // doesn't apply), a placeholder for 'no_percent_data' (transient), and the
-// count for 'computed'. Like the badge, this displays the threshold count,
-// not what the user has unlocked.
+// count for 'computed' (including a real zero). Like the badge, this
+// displays the threshold count, not what the user has unlocked.
 export const renderCommonAchievements = (progress: CommonAchievementProgress): ReactNode => {
   if (progress.status === 'no_achievements') return null
   if (progress.status === 'no_percent_data') {
@@ -63,7 +64,6 @@ export const renderCommonAchievements = (progress: CommonAchievementProgress): R
       </span>
     )
   }
-  if (progress.total === 0) return null
   return (
     <span title={commonAchievementsTooltip(progress)}>{String(progress.total)} minimum</span>
   )

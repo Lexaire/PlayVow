@@ -1,9 +1,9 @@
-import { and, asc, desc, eq, gte, isNull, lt, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm'
 
 import type { Db, DbOrTx } from '#/db/client'
 import { withTransaction } from '#/db/client'
-import type { WinStatus } from '#/db/schema'
-import { giveaways, groups, winObservations, wins } from '#/db/schema'
+import type { SteamAppId, SteamId, WinStatus } from '#/db/schema'
+import { giveaways, groups, users, winObservations, wins } from '#/db/schema'
 
 // Resolves the group that owns a given giveaway. Used by the win-counter
 // maintenance paths below — they need to know which row in `groups` to bump.
@@ -269,6 +269,197 @@ export const listPendingForPlaytimePoll = async (
     )
     .orderBy(asc(wins.lastCheckedAt))
 
+// Cadence and pre-spread parameters for the resolved-win refresh path.
+// Wins resolved within the last year are refreshed every ~14d; older wins
+// every ~30d. Each win gets a stable per-id offset (Fibonacci hashing) so
+// a batch that resolved together doesn't all become "due" in the same hour
+// — the offset distributes them across the full cadence window.
+const RESOLVED_FRESH_THRESHOLD_S = 365 * 24 * 60 * 60
+const RESOLVED_FRESH_CADENCE_S = 14 * 24 * 60 * 60
+const RESOLVED_OLD_CADENCE_S = 30 * 24 * 60 * 60
+// Knuth's multiplicative hashing constant. Coprime to the cadence values
+// above and small enough that id * MULT stays within SQLite's 64-bit signed
+// int range for any plausible win id.
+const SPREAD_MULT = 2654435761
+
+// SQL: this resolved win is past its individually-spread next-due time.
+// Encoded as a single boolean expression so the planner can use the
+// status/playDeadline index for its sibling pending predicate.
+//
+// Drizzle stores `timestamp` columns as integer unix seconds, so compare
+// directly to nowSeconds — wrapping the column with `unixepoch(...)` would
+// re-interpret it as a Julian Day number and produce nonsense. `now` is
+// threaded in (rather than using SQLite's `unixepoch()`) so tests with
+// synthetic dates stay deterministic.
+const buildResolvedDueExpr = (nowSeconds: number) => sql`(
+  ${wins.lastCheckedAt} IS NULL
+  OR (
+    ${nowSeconds} - ${wins.lastCheckedAt} >=
+      CASE
+        WHEN ${wins.resolvedAt} IS NULL
+          OR ${nowSeconds} - ${wins.resolvedAt} <= ${RESOLVED_FRESH_THRESHOLD_S}
+        THEN ${RESOLVED_FRESH_CADENCE_S}
+          + ((${wins.id} * ${SPREAD_MULT}) % ${RESOLVED_FRESH_CADENCE_S})
+        ELSE ${RESOLVED_OLD_CADENCE_S}
+          + ((${wins.id} * ${SPREAD_MULT}) % ${RESOLVED_OLD_CADENCE_S})
+      END
+  )
+)`
+
+export type WinForPoll = Win & {
+  readonly steamId: SteamId
+  readonly appId: SteamAppId
+}
+
+export type ListForPlaytimePollResult = {
+  // Wins to actually poll. Pre-filtered to pollable rows (giveaway not
+  // soft-deleted, app id and steam id both present), keyed by win.id with
+  // joined steamId/appId so the worker doesn't have to round-trip per win.
+  readonly wins: ReadonlyArray<WinForPoll>
+  // Number of pending wins inside the deadline window that we couldn't
+  // poll (missing steamId or steam app id). Reported as a metric so the
+  // operator can spot data integrity gaps.
+  readonly skippedNoContext: number
+}
+
+const winForPollColumns = {
+  id: wins.id,
+  giveawayId: wins.giveawayId,
+  userId: wins.userId,
+  wonAt: wins.wonAt,
+  playDeadline: wins.playDeadline,
+  playtimeAtWinMinutes: wins.playtimeAtWinMinutes,
+  currentPlaytimeMinutes: wins.currentPlaytimeMinutes,
+  playtime2WeeksMinutes: wins.playtime2WeeksMinutes,
+  hasReview: wins.hasReview,
+  screenshotCount: wins.screenshotCount,
+  achievementsUnlocked: wins.achievementsUnlocked,
+  achievementsTotal: wins.achievementsTotal,
+  status: wins.status,
+  lastCheckedAt: wins.lastCheckedAt,
+  resolvedAt: wins.resolvedAt,
+  modNotes: wins.modNotes,
+  steamId: users.steamId,
+  appId: giveaways.steamAppId,
+} as const
+
+// Returns every pollable win for any user with at least one "trigger" win.
+// Trigger = pending-within-deadline-window OR resolved-and-due-for-refresh.
+// Once a user is selected, all their pollable wins ride along (one
+// getOwnedGames call covers them all — see worker poll job for the
+// piggyback semantics on the resolved-but-not-due rows).
+//
+// Two queries:
+//   1) trigger user_ids (sub-select would also work but keeping it explicit
+//      makes the IN(...) cheap — typical worker tick selects ≤ a few dozen
+//      users, well below SQLite's IN list threshold).
+//   2) all pollable wins for those users, ordered oldest-checked first so
+//      a per-tick cap (if ever added) drains the most-neglected first.
+export const listForPlaytimePoll = async (
+  db: DbOrTx,
+  pendingDeadlineCutoff: Date,
+  now: Date,
+): Promise<ListForPlaytimePollResult> => {
+  const resolvedDueExpr = buildResolvedDueExpr(Math.floor(now.getTime() / 1000))
+  const triggerRows = await db
+    .selectDistinct({ userId: wins.userId })
+    .from(wins)
+    .innerJoin(giveaways, eq(wins.giveawayId, giveaways.id))
+    .innerJoin(users, eq(wins.userId, users.id))
+    .where(
+      and(
+        isNull(giveaways.deletedAt),
+        isNotNull(giveaways.steamAppId),
+        isNotNull(users.steamId),
+        or(
+          and(eq(wins.status, 'pending'), gte(wins.playDeadline, pendingDeadlineCutoff)),
+          and(ne(wins.status, 'pending'), resolvedDueExpr),
+        ),
+      ),
+    )
+
+  if (triggerRows.length === 0) {
+    return { wins: [], skippedNoContext: 0 }
+  }
+
+  const userIds = triggerRows.map((r) => r.userId)
+
+  // Pull every pollable win for the trigger users in one shot. The same
+  // sub-select on giveaways.deletedAt / NOT NULL guards we used to find the
+  // trigger users apply here too — a user with a missing-context win in
+  // their set just gets that row dropped, not the whole user.
+  const rows = await db
+    .select(winForPollColumns)
+    .from(wins)
+    .innerJoin(giveaways, eq(wins.giveawayId, giveaways.id))
+    .innerJoin(users, eq(wins.userId, users.id))
+    .where(
+      and(
+        inArray(wins.userId, userIds),
+        isNull(giveaways.deletedAt),
+        isNotNull(giveaways.steamAppId),
+        isNotNull(users.steamId),
+        // Don't carry pending wins past the deadline cutoff into the poll —
+        // those are presumed kicked/exempt and live outside the poll window.
+        // Resolved wins of trigger users are always included (cadence gate
+        // is applied in TS so the worker can branch full vs piggyback).
+        or(
+          and(eq(wins.status, 'pending'), gte(wins.playDeadline, pendingDeadlineCutoff)),
+          ne(wins.status, 'pending'),
+        ),
+      ),
+    )
+    .orderBy(asc(wins.lastCheckedAt))
+
+  // Count pending-in-window rows for these trigger users that were skipped
+  // for missing context. Resolved wins missing context are ignored by design
+  // — they're permanent gaps that don't need re-flagging on every tick.
+  const skippedRows = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(wins)
+    .innerJoin(giveaways, eq(wins.giveawayId, giveaways.id))
+    .leftJoin(users, eq(wins.userId, users.id))
+    .where(
+      and(
+        eq(wins.status, 'pending'),
+        gte(wins.playDeadline, pendingDeadlineCutoff),
+        isNull(giveaways.deletedAt),
+        or(isNull(giveaways.steamAppId), isNull(users.steamId)),
+      ),
+    )
+  const skippedNoContext = skippedRows[0]?.count ?? 0
+
+  // The select shape narrows steamId/appId to non-null via the inner joins
+  // and IS NOT NULL filters, but Drizzle's type for joined nullable columns
+  // stays nullable. Cast at the boundary; runtime is guaranteed by the WHERE.
+  const polled: WinForPoll[] = rows.map((r) => ({
+    ...r,
+    steamId: r.steamId as SteamId,
+    appId: r.appId as SteamAppId,
+  }))
+  return { wins: polled, skippedNoContext }
+}
+
+// Bumps lastCheckedAt for a batch of wins without writing any observation
+// or observable-fields data. Used by the poll job when a user's profile
+// comes back private — we couldn't actually see their data, but we did
+// "check," so the cadence pointer should advance. Without this, private
+// profiles would dominate the lastCheckedAt-asc ordering forever and cost
+// a Steam call per (user, win) per tick to confirm "still private."
+//
+// Resolved wins naturally defer to their per-id-spread cadence after this.
+// Pending wins still re-trigger hourly because the pending selector
+// doesn't gate on lastCheckedAt — that path remains a known re-poll cost
+// (worth measuring before deciding to add a separate backoff).
+export const markWinsChecked = async (
+  db: DbOrTx,
+  winIds: ReadonlyArray<number>,
+  checkedAt: Date,
+): Promise<void> => {
+  if (winIds.length === 0) return
+  await db.update(wins).set({ lastCheckedAt: checkedAt }).where(inArray(wins.id, winIds))
+}
+
 export const updateWinStatus = async (
   db: DbOrTx,
   winId: number,
@@ -406,6 +597,67 @@ export const recordWinPlaytimeBaseline = async (
       observationWritten = true
     }
     return { win: row, observationWritten }
+  })
+
+export type WinPlaytimePiggybackUpdate = {
+  readonly currentPlaytimeMinutes: number | null
+  readonly playtime2WeeksMinutes: number | null
+  readonly observedAt: Date
+}
+
+export type RecordWinPlaytimePiggybackResult = {
+  readonly win: Win
+  readonly changed: boolean
+}
+
+// Playtime-only refresh that piggybacks on a getOwnedGames call made for
+// some other reason (typically: this user has a pending or due-resolved
+// win, and including their not-yet-due resolved wins in the same call is
+// free). Three differences from recordWinPlaytimeProgress:
+//   1) Only currentPlaytimeMinutes / playtime2WeeksMinutes are written —
+//      we didn't fetch achievements/screenshots so we don't touch them.
+//   2) lastCheckedAt is NOT bumped. That column is the cadence pointer
+//      for the resolved-due predicate; updating it here would mean
+//      resolved wins of users with active pending wins never become due
+//      for a full refresh.
+//   3) The observation row carries the piggybacked playtime alongside the
+//      currently-known achievement/screenshot fields from `wins` — each
+//      observation stays a complete state snapshot rather than holding
+//      nulls for fields we didn't refresh.
+export const recordWinPlaytimePiggyback = async (
+  db: Db,
+  winId: number,
+  update: WinPlaytimePiggybackUpdate,
+): Promise<RecordWinPlaytimePiggybackResult> =>
+  withTransaction(db, async (tx) => {
+    const [existing] = await tx.select().from(wins).where(eq(wins.id, winId)).limit(1)
+    if (!existing) throw new Error(`recordWinPlaytimePiggyback: win ${String(winId)} not found`)
+
+    const changed =
+      existing.currentPlaytimeMinutes !== update.currentPlaytimeMinutes ||
+      existing.playtime2WeeksMinutes !== update.playtime2WeeksMinutes
+
+    if (!changed) return { win: existing, changed: false }
+
+    const [row] = await tx
+      .update(wins)
+      .set({
+        currentPlaytimeMinutes: update.currentPlaytimeMinutes,
+        playtime2WeeksMinutes: update.playtime2WeeksMinutes,
+      })
+      .where(eq(wins.id, winId))
+      .returning()
+    if (!row) throw new Error(`recordWinPlaytimePiggyback: win ${String(winId)} not found`)
+
+    await insertWinObservationTx(tx, winId, update.observedAt, {
+      currentPlaytimeMinutes: update.currentPlaytimeMinutes,
+      playtime2WeeksMinutes: update.playtime2WeeksMinutes,
+      hasReview: existing.hasReview,
+      screenshotCount: existing.screenshotCount,
+      achievementsUnlocked: existing.achievementsUnlocked,
+      achievementsTotal: existing.achievementsTotal,
+    })
+    return { win: row, changed: true }
   })
 
 export type RecordWinPlaytimeProgressResult = {

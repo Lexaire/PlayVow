@@ -38,7 +38,7 @@ const main = async (): Promise<void> => {
     }),
   })
   console.log(
-    `[poll-once] examined=${String(summary.winsExamined)} baselines=${String(summary.baselinesWritten)} progress=${String(summary.progressWritten)} private=${String(summary.privateProfiles)} missingGames=${String(summary.missingGames)} steamErrors=${String(summary.steamErrors)} skippedNoContext=${String(summary.skippedNoContext)}`,
+    `[poll-once] examined=${String(summary.winsExamined)} baselines=${String(summary.baselinesWritten)} progress=${String(summary.progressWritten)} privateUsers=${String(summary.privateUsers)} missingGames=${String(summary.missingGames)} steamErrors=${String(summary.steamErrors)} skippedNoContext=${String(summary.skippedNoContext)}`,
   )
 
   if (env.db.mode === 'replica') {

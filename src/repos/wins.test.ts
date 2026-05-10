@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Db } from '#/db/client'
-import { groups } from '#/db/schema'
+import { groups, wins } from '#/db/schema'
 import type {
   SteamAppId,
   SteamGiftsGiveawayCode,
@@ -18,11 +18,13 @@ import { upsertUserBySgUsername } from '#/repos/users'
 import {
   findWinByGiveawayAndUser,
   insertWinIfAbsent,
+  listForPlaytimePoll,
   listPendingForPlaytimePoll,
   listPendingPastDeadlineByGroup,
   listRecentWinsByGroup,
   listWinObservations,
   recordWinPlaytimeBaseline,
+  recordWinPlaytimePiggyback,
   recordWinPlaytimeProgress,
   updateWinNotes,
   updateWinStatus,
@@ -356,6 +358,199 @@ describe('winsRepo', () => {
     await updateWinStatus(db, fresh.id, 'played', new Date('2026-02-01T00:00:00Z'))
     const after = await listPendingForPlaytimePoll(db, cutoff)
     expect(after).toHaveLength(0)
+  })
+
+  it('listForPlaytimePoll: pending in window comes back with steamId/appId joined', async () => {
+    const f = await seed(db)
+    const fresh = await insertWinIfAbsent(db, {
+      giveawayId: f.giveawayIdA,
+      userId: f.userIdA,
+      wonAt: new Date('2026-01-08T00:00:00Z'),
+      playDeadline: new Date('2026-12-31T00:00:00Z'),
+    })
+    if (!fresh) throw new Error('insert failed')
+
+    const cutoff = new Date('2026-01-01T00:00:00Z')
+    const r = await listForPlaytimePoll(db, cutoff, new Date('2026-04-25T00:00:00Z'))
+    expect(r.wins).toHaveLength(1)
+    expect(r.wins[0]?.id).toBe(fresh.id)
+    expect(r.wins[0]?.steamId).toBe(STEAM_A)
+    expect(r.wins[0]?.appId).toBe(APP_A)
+    expect(r.skippedNoContext).toBe(0)
+  })
+
+  it('listForPlaytimePoll: a resolved win without due time does not trigger its user', async () => {
+    const f = await seed(db)
+    const w = await insertWinIfAbsent(db, {
+      giveawayId: f.giveawayIdA,
+      userId: f.userIdA,
+      wonAt: new Date('2026-01-08T00:00:00Z'),
+      playDeadline: new Date('2026-12-31T00:00:00Z'),
+    })
+    if (!w) throw new Error('insert failed')
+    // Mark played and pretend we just polled it — neither pending nor due,
+    // so this user has no trigger and shouldn't appear at all.
+    await updateWinStatus(db, w.id, 'played', new Date('2026-04-01T00:00:00Z'))
+    await db
+      .update(wins)
+      .set({ lastCheckedAt: new Date('2026-04-01T00:00:00Z') })
+      .where(eq(wins.id, w.id))
+
+    const r = await listForPlaytimePoll(
+      db,
+      new Date('2026-04-02T00:00:00Z'),
+      new Date('2026-04-02T00:00:00Z'),
+    )
+    expect(r.wins).toHaveLength(0)
+  })
+
+  it('listForPlaytimePoll: an overdue resolved win triggers its user (full path)', async () => {
+    const f = await seed(db)
+    const w = await insertWinIfAbsent(db, {
+      giveawayId: f.giveawayIdA,
+      userId: f.userIdA,
+      wonAt: new Date('2026-01-08T00:00:00Z'),
+      playDeadline: new Date('2026-04-08T00:00:00Z'),
+    })
+    if (!w) throw new Error('insert failed')
+    await updateWinStatus(db, w.id, 'played', new Date('2026-04-09T00:00:00Z'))
+    // Last poll 60 days ago — past the 14d fresh cadence even with the
+    // worst-case spread offset.
+    await db
+      .update(wins)
+      .set({ lastCheckedAt: new Date('2026-04-09T00:00:00Z') })
+      .where(eq(wins.id, w.id))
+
+    const r = await listForPlaytimePoll(
+      db,
+      new Date('2026-06-09T00:00:00Z'),
+      new Date('2026-06-09T00:00:00Z'),
+    )
+    expect(r.wins).toHaveLength(1)
+    expect(r.wins[0]?.id).toBe(w.id)
+    expect(r.wins[0]?.status).toBe('played')
+  })
+
+  it('listForPlaytimePoll: a pending win brings along a not-yet-due resolved win for the same user', async () => {
+    const f = await seed(db)
+    // User A has both a pending win and a recently-resolved (not-due) win.
+    const pending = await insertWinIfAbsent(db, {
+      giveawayId: f.giveawayIdA,
+      userId: f.userIdA,
+      wonAt: new Date('2026-06-01T00:00:00Z'),
+      playDeadline: new Date('2026-12-31T00:00:00Z'),
+    })
+    if (!pending) throw new Error('insert failed')
+
+    // Build a second giveaway for the resolved win.
+    const giveawayB = await upsertGiveaway(db, {
+      groupId: f.groupId,
+      steamgiftsCode: 'gB001' as SteamGiftsGiveawayCode,
+      target: { kind: 'app', appId: APP_A },
+      creatorUserId: f.userIdB,
+      quantity: 1,
+      startedAt: new Date('2026-04-01T00:00:00Z'),
+      endedAt: new Date('2026-04-08T00:00:00Z'),
+      scrapedAt: new Date('2026-04-09T00:00:00Z'),
+    })
+    const resolved = await insertWinIfAbsent(db, {
+      giveawayId: giveawayB.id,
+      userId: f.userIdA,
+      wonAt: new Date('2026-04-08T00:00:00Z'),
+      playDeadline: new Date('2026-07-08T00:00:00Z'),
+    })
+    if (!resolved) throw new Error('insert failed')
+    await updateWinStatus(db, resolved.id, 'played', new Date('2026-06-05T00:00:00Z'))
+    await db
+      .update(wins)
+      .set({ lastCheckedAt: new Date('2026-06-05T00:00:00Z') })
+      .where(eq(wins.id, resolved.id))
+
+    const r = await listForPlaytimePoll(
+      db,
+      new Date('2026-06-06T00:00:00Z'),
+      new Date('2026-06-06T00:00:00Z'),
+    )
+    const ids = r.wins.map((w) => w.id).sort()
+    expect(ids).toEqual([pending.id, resolved.id].sort())
+  })
+
+  it('recordWinPlaytimePiggyback: writes observation + updates wins, leaves lastCheckedAt untouched', async () => {
+    const f = await seed(db)
+    const win = await insertWinIfAbsent(db, {
+      giveawayId: f.giveawayIdA,
+      userId: f.userIdA,
+      wonAt: new Date('2026-01-08T00:00:00Z'),
+      playDeadline: new Date('2026-04-08T00:00:00Z'),
+    })
+    if (!win) throw new Error('insert failed')
+    // Establish a baseline (this bumps lastCheckedAt to the baseline time).
+    const baselineAt = new Date('2026-04-09T00:00:00Z')
+    await recordWinPlaytimeBaseline(db, win.id, {
+      playtimeAtWinMinutes: 10,
+      currentPlaytimeMinutes: 10,
+      playtime2WeeksMinutes: null,
+      hasReview: null,
+      screenshotCount: 2,
+      achievementsUnlocked: 1,
+      achievementsTotal: 5,
+      checkedAt: baselineAt,
+    })
+
+    const piggybackAt = new Date('2026-04-20T00:00:00Z')
+    const r = await recordWinPlaytimePiggyback(db, win.id, {
+      currentPlaytimeMinutes: 25,
+      playtime2WeeksMinutes: 15,
+      observedAt: piggybackAt,
+    })
+    expect(r.changed).toBe(true)
+    // Reload and verify lastCheckedAt is still the baseline time, not the
+    // piggyback time — that's the cadence-pointer invariant.
+    const reloaded = await findWinByGiveawayAndUser(db, f.giveawayIdA, f.userIdA)
+    expect(reloaded?.lastCheckedAt?.toISOString()).toBe(baselineAt.toISOString())
+    expect(reloaded?.currentPlaytimeMinutes).toBe(25)
+    expect(reloaded?.playtime2WeeksMinutes).toBe(15)
+    // Untouched-by-piggyback fields stayed at baseline values.
+    expect(reloaded?.screenshotCount).toBe(2)
+    expect(reloaded?.achievementsUnlocked).toBe(1)
+
+    // Observation row should carry the new playtime alongside the
+    // last-known achievement/screenshot snapshot — a complete state row.
+    const obs = await listWinObservations(db, win.id)
+    expect(obs).toHaveLength(2)
+    expect(obs[1]?.currentPlaytimeMinutes).toBe(25)
+    expect(obs[1]?.screenshotCount).toBe(2)
+    expect(obs[1]?.achievementsUnlocked).toBe(1)
+  })
+
+  it('recordWinPlaytimePiggyback: no-op when playtime is unchanged', async () => {
+    const f = await seed(db)
+    const win = await insertWinIfAbsent(db, {
+      giveawayId: f.giveawayIdA,
+      userId: f.userIdA,
+      wonAt: new Date('2026-01-08T00:00:00Z'),
+      playDeadline: new Date('2026-04-08T00:00:00Z'),
+    })
+    if (!win) throw new Error('insert failed')
+    await recordWinPlaytimeBaseline(db, win.id, {
+      playtimeAtWinMinutes: 10,
+      currentPlaytimeMinutes: 10,
+      playtime2WeeksMinutes: null,
+      hasReview: null,
+      screenshotCount: null,
+      achievementsUnlocked: null,
+      achievementsTotal: null,
+      checkedAt: new Date('2026-04-09T00:00:00Z'),
+    })
+
+    const r = await recordWinPlaytimePiggyback(db, win.id, {
+      currentPlaytimeMinutes: 10,
+      playtime2WeeksMinutes: null,
+      observedAt: new Date('2026-04-20T00:00:00Z'),
+    })
+    expect(r.changed).toBe(false)
+    const obs = await listWinObservations(db, win.id)
+    expect(obs).toHaveLength(1)
   })
 
   const readGroupCounters = async (

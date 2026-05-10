@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react'
 import {
   CartesianGrid,
   Line,
@@ -11,21 +12,34 @@ import {
 import { formatPlaytimeCompact, formatPlaytimePrecise } from '#/lib/playtime'
 import type { AchievementUnlockView, WinObservationView } from '#/server/queries'
 
-const tickDateFormat = new Intl.DateTimeFormat('en-CA', {
-  month: 'short',
-  day: '2-digit',
-  timeZone: 'UTC',
-})
-
-const tooltipDateFormat = new Intl.DateTimeFormat('en-CA', {
-  year: 'numeric',
-  month: 'short',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  timeZone: 'UTC',
-  timeZoneName: 'short',
-})
+// SSR renders UTC (deterministic), then a post-mount effect swaps in the
+// browser's local timezone — same approach as LocalDate, just adapted for
+// recharts tick/tooltip formatter functions.
+function useDateFormatters() {
+  const [timeZone, setTimeZone] = useState<string>('UTC')
+  useEffect(() => {
+    setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone)
+  }, [])
+  return useMemo(
+    () => ({
+      tick: new Intl.DateTimeFormat('en-CA', {
+        month: 'short',
+        day: '2-digit',
+        timeZone,
+      }),
+      tooltip: new Intl.DateTimeFormat('en-CA', {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone,
+        timeZoneName: 'short',
+      }),
+    }),
+    [timeZone],
+  )
+}
 
 const unlockName = (u: AchievementUnlockView): string => u.displayName ?? u.apiname
 
@@ -61,6 +75,7 @@ function PlaytimeChart({
 }: {
   readonly observations: ReadonlyArray<WinObservationView>
 }) {
+  const formatters = useDateFormatters()
   const data: ReadonlyArray<PlaytimePoint> = observations.map((o) => ({
     t: o.observedAt.getTime(),
     playtime: o.currentPlaytimeMinutes,
@@ -76,7 +91,7 @@ function PlaytimeChart({
           dataKey="t"
           domain={domain}
           scale="time"
-          tickFormatter={(v: number) => tickDateFormat.format(new Date(v))}
+          tickFormatter={(v: number) => formatters.tick.format(new Date(v))}
           stroke="#737373"
           fontSize={11}
         />
@@ -86,7 +101,7 @@ function PlaytimeChart({
           fontSize={11}
           width={56}
         />
-        <Tooltip content={<PlaytimeTooltip />} />
+        <Tooltip content={<PlaytimeTooltip tooltipFormat={formatters.tooltip} />} />
         <Line
           type="monotone"
           dataKey="playtime"
@@ -109,6 +124,7 @@ function AchievementsChart({
 }: {
   readonly unlocks: ReadonlyArray<AchievementUnlockView>
 }) {
+  const formatters = useDateFormatters()
   const data: ReadonlyArray<UnlockPoint> = unlocks.map((u, i) => ({
     t: u.unlockedAt.getTime(),
     count: i + 1,
@@ -125,12 +141,12 @@ function AchievementsChart({
           dataKey="t"
           domain={domain}
           scale="time"
-          tickFormatter={(v: number) => tickDateFormat.format(new Date(v))}
+          tickFormatter={(v: number) => formatters.tick.format(new Date(v))}
           stroke="#737373"
           fontSize={11}
         />
         <YAxis allowDecimals={false} stroke="#737373" fontSize={11} width={32} />
-        <Tooltip content={<AchievementsTooltip />} />
+        <Tooltip content={<AchievementsTooltip tooltipFormat={formatters.tooltip} />} />
         <Line
           type="stepAfter"
           dataKey="count"
@@ -172,17 +188,19 @@ type TooltipPayloadEntry = {
 function PlaytimeTooltip({
   active,
   payload,
+  tooltipFormat,
 }: {
   readonly active?: boolean
   readonly payload?: ReadonlyArray<TooltipPayloadEntry>
+  readonly tooltipFormat?: Intl.DateTimeFormat
 }) {
-  if (active !== true || !payload || payload.length === 0) return null
+  if (active !== true || !payload || payload.length === 0 || !tooltipFormat) return null
   const point = payload[0]?.payload as PlaytimePoint | undefined
   if (!point) return null
   return (
     <div className="rounded border border-neutral-300 bg-surface px-2 py-1.5 text-xs shadow-sm">
       <div className="font-medium text-neutral-900">
-        {tooltipDateFormat.format(new Date(point.t))}
+        {tooltipFormat.format(new Date(point.t))}
       </div>
       <div className="text-blue-700">
         {point.playtime === null
@@ -196,17 +214,19 @@ function PlaytimeTooltip({
 function AchievementsTooltip({
   active,
   payload,
+  tooltipFormat,
 }: {
   readonly active?: boolean
   readonly payload?: ReadonlyArray<TooltipPayloadEntry>
+  readonly tooltipFormat?: Intl.DateTimeFormat
 }) {
-  if (active !== true || !payload || payload.length === 0) return null
+  if (active !== true || !payload || payload.length === 0 || !tooltipFormat) return null
   const point = payload[0]?.payload as UnlockPoint | undefined
   if (!point) return null
   return (
     <div className="rounded border border-neutral-300 bg-surface px-2 py-1.5 text-xs shadow-sm">
       <div className="font-medium text-neutral-900">
-        {tooltipDateFormat.format(new Date(point.t))}
+        {tooltipFormat.format(new Date(point.t))}
       </div>
       <div className="text-amber-700">
         #{point.count}: {point.name}
