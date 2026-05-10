@@ -1,8 +1,9 @@
-import { and, asc, count, desc, eq, gt, inArray, lt, sql, sum } from 'drizzle-orm'
+import { and, asc, count, desc, eq, gt, inArray, isNull, lt, sql, sum } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 
 import type { DbOrTx } from '#/db/client'
 import type {
+  GroupSource,
   SteamAppId,
   SteamGiftsGiveawayCode,
   SteamGiftsUsername,
@@ -60,19 +61,10 @@ export type Page<T> = {
 
 const toOffset = (page: number, pageSize: number): number => Math.max(0, (page - 1) * pageSize)
 
-// Wins/giveaways always reference an SG-scraped user, so the user's
-// steamgifts_username column is non-null in practice even though the schema
-// allows null (Steam-only users never appear in these joins). Assert at the
-// boundary so view types stay honest.
-const requireSgUsername = (user: {
-  readonly id: number
-  readonly steamgiftsUsername: SteamGiftsUsername | null
-}): SteamGiftsUsername => {
-  if (user.steamgiftsUsername === null) {
-    throw new Error(`user ${user.id} has null steamgifts_username on a wins/giveaways join`)
-  }
-  return user.steamgiftsUsername
-}
+// Reusable predicate so the soft-delete check stays consistent across every
+// giveaway/wins read site. Manual giveaways the admin removed have
+// deleted_at set; SG-scraped rows always have it null.
+const giveawayNotDeleted = () => isNull(giveaways.deletedAt)
 
 export type GroupSummary = {
   readonly id: number
@@ -80,18 +72,26 @@ export type GroupSummary = {
   readonly name: string
   readonly playWindowDays: number
   readonly description: string | null
+  readonly source: GroupSource
 }
 
+// User and creator summaries can be missing an SG username in two cases now:
+// (a) Steam-only users that get pulled into a manual giveaway via
+//     upsertUserBySteamId — no SG scrape has resolved them yet, and may
+//     never; (b) the moderator who creates a manual giveaway, recorded as
+//     creator_user_id, may have signed in via Steam alone. Consumers must
+//     fall back to /u/steam/$steamId for the link target and a synthesized
+//     display name when the SG username is absent.
 export type WinUserSummary = {
   readonly id: number
   readonly steamId: SteamId | null
-  readonly steamgiftsUsername: SteamGiftsUsername
+  readonly steamgiftsUsername: SteamGiftsUsername | null
   readonly avatarUrl: string | null
 }
 
 export type GiveawayCreatorSummary = {
   readonly id: number
-  readonly steamgiftsUsername: SteamGiftsUsername
+  readonly steamgiftsUsername: SteamGiftsUsername | null
   readonly steamId: SteamId | null
   readonly avatarUrl: string | null
 }
@@ -121,7 +121,10 @@ export type GiveawayTargetView =
 
 export type GiveawayView = {
   readonly id: number
-  readonly steamgiftsCode: SteamGiftsGiveawayCode
+  // Null for manually-added giveaways on a manual-source group; non-null for
+  // anything that came in from the SteamGifts scrape. Consumers building SG
+  // links must null-check before using.
+  readonly steamgiftsCode: SteamGiftsGiveawayCode | null
   readonly target: GiveawayTargetView
   readonly quantity: number
   readonly startedAt: Date
@@ -145,7 +148,7 @@ export type CreatorStats = {
 
 export type WinGiveawaySummary = {
   readonly id: number
-  readonly steamgiftsCode: SteamGiftsGiveawayCode
+  readonly steamgiftsCode: SteamGiftsGiveawayCode | null
   readonly groupSlug: string
   readonly groupName: string
   readonly target: GiveawayTargetView
@@ -220,7 +223,7 @@ const toWinView = (row: {
   user: {
     id: row.user.id,
     steamId: row.user.steamId,
-    steamgiftsUsername: requireSgUsername(row.user),
+    steamgiftsUsername: row.user.steamgiftsUsername,
     avatarUrl: row.user.avatarUrl,
   },
   giveaway: {
@@ -231,7 +234,7 @@ const toWinView = (row: {
     target: buildTarget(row.app, row.sub),
     creator: {
       id: row.creator.id,
-      steamgiftsUsername: requireSgUsername(row.creator),
+      steamgiftsUsername: row.creator.steamgiftsUsername,
       steamId: row.creator.steamId,
       avatarUrl: row.creator.avatarUrl,
     },
@@ -279,7 +282,7 @@ export type GiveawayPageData = {
   readonly group: GroupSummary
   readonly giveaway: {
     readonly id: number
-    readonly steamgiftsCode: SteamGiftsGiveawayCode
+    readonly steamgiftsCode: SteamGiftsGiveawayCode | null
     readonly quantity: number
     readonly startedAt: Date
     readonly endedAt: Date
@@ -315,6 +318,7 @@ export const listGroupSummaries = async (db: DbOrTx): Promise<ReadonlyArray<Grou
       name: groups.name,
       playWindowDays: groups.playWindowDays,
       description: groups.description,
+      source: groups.source,
     })
     .from(groups)
     .orderBy(asc(groups.name))
@@ -350,6 +354,7 @@ const findGroupBySlug = async (db: DbOrTx, slug: string): Promise<GroupSummary |
       name: groups.name,
       playWindowDays: groups.playWindowDays,
       description: groups.description,
+      source: groups.source,
     })
     .from(groups)
     .where(eq(groups.slug, slug))
@@ -382,7 +387,7 @@ const toGiveawayView = (r: {
   winnerCount: r.winnerCount,
   creator: {
     id: r.creator.id,
-    steamgiftsUsername: requireSgUsername(r.creator),
+    steamgiftsUsername: r.creator.steamgiftsUsername,
     steamId: r.creator.steamId,
     avatarUrl: r.creator.avatarUrl,
   },
@@ -429,19 +434,31 @@ export const getGroupOverviewPage = async (
       .leftJoin(steamApps, eq(steamApps.appId, giveaways.steamAppId))
       .leftJoin(steamSubs, eq(steamSubs.subId, giveaways.steamSubId))
       .innerJoin(inProgressCreators, eq(inProgressCreators.id, giveaways.creatorUserId))
-      .where(and(eq(giveaways.groupId, groupRow.id), gt(giveaways.endedAt, now)))
+      .where(
+        and(
+          eq(giveaways.groupId, groupRow.id),
+          gt(giveaways.endedAt, now),
+          giveawayNotDeleted(),
+        ),
+      )
       .orderBy(asc(giveaways.endedAt))
       .limit(IN_PROGRESS_PAGE_SIZE)
       .offset(toOffset(inProgressPage, IN_PROGRESS_PAGE_SIZE)),
     db
       .select({ n: count() })
       .from(giveaways)
-      .where(and(eq(giveaways.groupId, groupRow.id), gt(giveaways.endedAt, now))),
+      .where(
+        and(
+          eq(giveaways.groupId, groupRow.id),
+          gt(giveaways.endedAt, now),
+          giveawayNotDeleted(),
+        ),
+      ),
     db
       .select({ id: wins.id, effectiveAt: wins.wonAt })
       .from(wins)
       .innerJoin(giveaways, eq(giveaways.id, wins.giveawayId))
-      .where(eq(giveaways.groupId, groupRow.id)),
+      .where(and(eq(giveaways.groupId, groupRow.id), giveawayNotDeleted())),
     db
       .select({ id: giveaways.id, effectiveAt: giveaways.endedAt })
       .from(giveaways)
@@ -451,6 +468,7 @@ export const getGroupOverviewPage = async (
           // Only ended giveaways count as "no winner"; in-progress ones live
           // in the dedicated section above and would otherwise double-count.
           lt(giveaways.endedAt, now),
+          giveawayNotDeleted(),
           sql`NOT EXISTS (SELECT 1 FROM ${wins} WHERE ${wins.giveawayId} = ${giveaways.id})`,
         ),
       ),
@@ -480,7 +498,9 @@ export const getGroupOverviewPage = async (
 
   const noWinnerCreators = alias(users, 'no_winner_creators')
   const [winHydratedRows, noWinnerHydratedRows] = await Promise.all([
-    winIds.length === 0 ? Promise.resolve([]) : selectWinJoin(db).where(inArray(wins.id, winIds)),
+    winIds.length === 0
+      ? Promise.resolve([])
+      : selectWinJoin(db).where(and(inArray(wins.id, winIds), giveawayNotDeleted())),
     noWinnerIds.length === 0
       ? Promise.resolve([])
       : db
@@ -553,6 +573,7 @@ const listNoWinnersGiveawaysByUserId = async (
     .where(
       and(
         eq(giveaways.creatorUserId, userId),
+        giveawayNotDeleted(),
         sql`NOT EXISTS (SELECT 1 FROM ${wins} WHERE ${wins.giveawayId} = ${giveaways.id})`,
       ),
     )
@@ -571,7 +592,7 @@ const listNoWinnersGiveawaysByUserId = async (
     winnerCount: 0,
     creator: {
       id: r.creator.id,
-      steamgiftsUsername: requireSgUsername(r.creator),
+      steamgiftsUsername: r.creator.steamgiftsUsername,
       steamId: r.creator.steamId,
       avatarUrl: r.creator.avatarUrl,
     },
@@ -583,6 +604,11 @@ const getCreatorStats = async (db: DbOrTx, userId: number, now: Date): Promise<C
   // Active uses gt() so drizzle encodes `now` against the integer-timestamp
   // column mode. Don't put the Date into a raw sql`` template — the driver
   // won't know to convert it and the predicate silently never matches.
+  //
+  // Manual giveaways count toward these stats too: the manual flow records
+  // the actual gift-giver as creator_user_id (the mod entering them is
+  // captured separately on the audit row), so the credit goes to the right
+  // person.
   const [aggRow, activeRow, winnersRow] = await Promise.all([
     db
       .select({
@@ -590,16 +616,22 @@ const getCreatorStats = async (db: DbOrTx, userId: number, now: Date): Promise<C
         keysGiven: sum(giveaways.quantity),
       })
       .from(giveaways)
-      .where(eq(giveaways.creatorUserId, userId)),
+      .where(and(eq(giveaways.creatorUserId, userId), giveawayNotDeleted())),
     db
       .select({ n: count() })
       .from(giveaways)
-      .where(and(eq(giveaways.creatorUserId, userId), gt(giveaways.endedAt, now))),
+      .where(
+        and(
+          eq(giveaways.creatorUserId, userId),
+          gt(giveaways.endedAt, now),
+          giveawayNotDeleted(),
+        ),
+      ),
     db
       .select({ n: count() })
       .from(wins)
       .innerJoin(giveaways, eq(giveaways.id, wins.giveawayId))
-      .where(eq(giveaways.creatorUserId, userId)),
+      .where(and(eq(giveaways.creatorUserId, userId), giveawayNotDeleted())),
   ])
 
   const total = aggRow[0]?.total ?? 0
@@ -644,13 +676,14 @@ export const getUserPageDataByUsername = async (
     db
       .select({ status: wins.status, n: count() })
       .from(wins)
-      .where(eq(wins.userId, userRow.id))
+      .innerJoin(giveaways, eq(giveaways.id, wins.giveawayId))
+      .where(and(eq(wins.userId, userRow.id), giveawayNotDeleted()))
       .groupBy(wins.status),
     db
       .select({ status: wins.status, n: count() })
       .from(wins)
       .innerJoin(giveaways, eq(giveaways.id, wins.giveawayId))
-      .where(eq(giveaways.creatorUserId, userRow.id))
+      .where(and(eq(giveaways.creatorUserId, userRow.id), giveawayNotDeleted()))
       .groupBy(wins.status),
   ])
 
@@ -666,7 +699,9 @@ export const getUserPageDataByUsername = async (
     const page = winsPages[status] ?? 1
     if (total === 0) return emptyPage(page, pageSize)
     const rows = await selectWinJoin(db)
-      .where(and(eq(wins.userId, userRow.id), eq(wins.status, status)))
+      .where(
+        and(eq(wins.userId, userRow.id), eq(wins.status, status), giveawayNotDeleted()),
+      )
       .orderBy(desc(wins.wonAt))
       .limit(pageSize)
       .offset(toOffset(page, pageSize))
@@ -678,7 +713,13 @@ export const getUserPageDataByUsername = async (
     const page = createdWinsPages[status] ?? 1
     if (total === 0) return emptyPage(page, pageSize)
     const rows = await selectWinJoin(db)
-      .where(and(eq(giveaways.creatorUserId, userRow.id), eq(wins.status, status)))
+      .where(
+        and(
+          eq(giveaways.creatorUserId, userRow.id),
+          eq(wins.status, status),
+          giveawayNotDeleted(),
+        ),
+      )
       .orderBy(desc(wins.wonAt))
       .limit(pageSize)
       .offset(toOffset(page, pageSize))
@@ -705,6 +746,7 @@ export const getUserPageDataByUsername = async (
       .where(
         and(
           eq(giveaways.creatorUserId, userRow.id),
+          giveawayNotDeleted(),
           sql`NOT EXISTS (SELECT 1 FROM ${wins} WHERE ${wins.giveawayId} = ${giveaways.id})`,
         ),
       ),
@@ -727,7 +769,7 @@ export const getUserPageDataByUsername = async (
   const user: WinUserSummary = {
     id: userRow.id,
     steamId: userRow.steamId,
-    steamgiftsUsername: requireSgUsername(userRow),
+    steamgiftsUsername: userRow.steamgiftsUsername,
     avatarUrl: userRow.avatarUrl,
   }
 
@@ -781,10 +823,18 @@ export const getModWinsPage = async (
   const groupRow = await findGroupBySlug(db, slug)
   if (!groupRow) return null
 
+  // Hide soft-deleted giveaways' wins from the mod view; the totals counter
+  // comes from groups.totalWins/pendingWins, which softDeleteManualGiveawayTx
+  // decrements at delete time, so the count and the rendered list stay in
+  // sync.
   const baseWhere =
     filter === 'pending'
-      ? and(eq(groups.id, groupRow.id), eq(wins.status, 'pending'))
-      : eq(groups.id, groupRow.id)
+      ? and(
+          eq(groups.id, groupRow.id),
+          eq(wins.status, 'pending'),
+          giveawayNotDeleted(),
+        )
+      : and(eq(groups.id, groupRow.id), giveawayNotDeleted())
 
   // Total comes from the denormalized counter on `groups` (see
   // wins repo + 0010 migration backfill), not a count(*) join. One column
@@ -853,7 +903,9 @@ export const getModWinDetail = async (
   db: DbOrTx,
   winId: number,
 ): Promise<ModWinDetailData | null> => {
-  const [row] = await selectWinJoin(db).where(eq(wins.id, winId)).limit(1)
+  const [row] = await selectWinJoin(db)
+    .where(and(eq(wins.id, winId), giveawayNotDeleted()))
+    .limit(1)
   if (!row) return null
 
   const [auditEntries, observationRows, unlockRows, membershipStatus, commonAchievements] = await Promise.all([
@@ -914,10 +966,14 @@ export const getModWinDetail = async (
   }
 }
 
-export const getGiveawayPageData = async (
+// Shared core for the per-giveaway page query. Lookup keys differ
+// (SG-scraped giveaways are addressed by their SG code; manual giveaways
+// have no code, so they're addressed by the internal giveaway id), but
+// once we've found the row, the rest of the page composition — wins join,
+// common-achievement batch, view-shape mapping — is identical.
+const getGiveawayPageDataByPredicate = async (
   db: DbOrTx,
-  slug: string,
-  code: SteamGiftsGiveawayCode,
+  predicate: ReturnType<typeof and>,
 ): Promise<GiveawayPageData | null> => {
   const creators = alias(users, 'creators')
   const [row] = await db
@@ -928,6 +984,7 @@ export const getGiveawayPageData = async (
         name: groups.name,
         playWindowDays: groups.playWindowDays,
         description: groups.description,
+        source: groups.source,
       },
       giveaway: giveaways,
       app: steamApps,
@@ -939,7 +996,8 @@ export const getGiveawayPageData = async (
     .leftJoin(steamApps, eq(steamApps.appId, giveaways.steamAppId))
     .leftJoin(steamSubs, eq(steamSubs.subId, giveaways.steamSubId))
     .innerJoin(creators, eq(creators.id, giveaways.creatorUserId))
-    .where(and(eq(groups.slug, slug), eq(giveaways.steamgiftsCode, code)))
+    // Soft-deleted giveaways 404; the route loader maps null → notFound().
+    .where(and(predicate, giveawayNotDeleted()))
     .limit(1)
 
   if (!row) return null
@@ -964,7 +1022,7 @@ export const getGiveawayPageData = async (
       target: buildTarget(row.app, row.sub),
       creator: {
         id: row.creator.id,
-        steamgiftsUsername: requireSgUsername(row.creator),
+        steamgiftsUsername: row.creator.steamgiftsUsername,
         steamId: row.creator.steamId,
         avatarUrl: row.creator.avatarUrl,
       },
@@ -973,6 +1031,23 @@ export const getGiveawayPageData = async (
     commonByWinId: Array.from(commonByWinId),
   }
 }
+
+export const getGiveawayPageData = async (
+  db: DbOrTx,
+  slug: string,
+  code: SteamGiftsGiveawayCode,
+): Promise<GiveawayPageData | null> =>
+  getGiveawayPageDataByPredicate(
+    db,
+    and(eq(groups.slug, slug), eq(giveaways.steamgiftsCode, code)),
+  )
+
+export const getGiveawayPageDataById = async (
+  db: DbOrTx,
+  slug: string,
+  giveawayId: number,
+): Promise<GiveawayPageData | null> =>
+  getGiveawayPageDataByPredicate(db, and(eq(groups.slug, slug), eq(giveaways.id, giveawayId)))
 
 // Cross-group "wins for this Steam app/sub" page. Mirrors selectWinJoin's
 // shape but filters by the giveaway's target. One round-trip pulls the rows;
@@ -986,7 +1061,7 @@ const listWinsForGiveawayWhere = async (
 ): Promise<Page<WinView>> => {
   const [rows, totalRow] = await Promise.all([
     selectWinJoin(db)
-      .where(whereExpr)
+      .where(and(whereExpr, giveawayNotDeleted()))
       .orderBy(desc(wins.wonAt))
       .limit(pageSize)
       .offset(toOffset(page, pageSize)),
@@ -994,7 +1069,7 @@ const listWinsForGiveawayWhere = async (
       .select({ n: count() })
       .from(wins)
       .innerJoin(giveaways, eq(giveaways.id, wins.giveawayId))
-      .where(whereExpr),
+      .where(and(whereExpr, giveawayNotDeleted())),
   ])
   return {
     rows: rows.map(toWinView),
@@ -1033,11 +1108,11 @@ const listGiveawaysForGiveawayWhere = async (
       .leftJoin(steamApps, eq(steamApps.appId, giveaways.steamAppId))
       .leftJoin(steamSubs, eq(steamSubs.subId, giveaways.steamSubId))
       .innerJoin(creators, eq(creators.id, giveaways.creatorUserId))
-      .where(whereExpr)
+      .where(and(whereExpr, giveawayNotDeleted()))
       .orderBy(desc(giveaways.endedAt))
       .limit(pageSize)
       .offset(toOffset(page, pageSize)),
-    db.select({ n: count() }).from(giveaways).where(whereExpr),
+    db.select({ n: count() }).from(giveaways).where(and(whereExpr, giveawayNotDeleted())),
   ])
   return {
     rows: rows.map((r) => ({
@@ -1051,7 +1126,7 @@ const listGiveawaysForGiveawayWhere = async (
       winnerCount: r.winnerCount,
       creator: {
         id: r.creator.id,
-        steamgiftsUsername: requireSgUsername(r.creator),
+        steamgiftsUsername: r.creator.steamgiftsUsername,
         steamId: r.creator.steamId,
         avatarUrl: r.creator.avatarUrl,
       },

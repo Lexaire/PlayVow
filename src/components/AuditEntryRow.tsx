@@ -35,6 +35,25 @@ export const describeAuditEvent = (event: AuditEntry['event']): string => {
       return `Group created: ${event.name}`
     case 'group_updated':
       return `Group updated: ${event.after.name}`
+    case 'giveaway_created': {
+      const target =
+        event.appId !== null
+          ? `app ${String(event.appId)}`
+          : event.subId !== null
+            ? `sub ${String(event.subId)}`
+            : 'unknown'
+      return `Giveaway created (${event.source}): ${target}`
+    }
+    case 'giveaway_deleted': {
+      const target =
+        event.appId !== null
+          ? `app ${String(event.appId)}`
+          : event.subId !== null
+            ? `sub ${String(event.subId)}`
+            : 'unknown'
+      const winSuffix = event.winCount === 1 ? '1 win' : `${String(event.winCount)} wins`
+      return `Giveaway deleted: ${target} (${winSuffix})`
+    }
     case 'role_granted':
       return `Role granted: ${event.before} → ${event.after}${event.reason ? ` (${event.reason})` : ''}`
     case 'role_revoked':

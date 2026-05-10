@@ -102,6 +102,12 @@ function UserPage() {
     groupMemberships,
     commonByWinId,
   } = Route.useLoaderData()
+  const params = Route.useParams()
+  // The /u/$username route loads via SG username, so the resolved user always
+  // has a non-null steamgiftsUsername equal to params.username. Falling back
+  // to the URL param keeps TS honest now that WinUserSummary is nullable
+  // post-manual-groups.
+  const username = user.steamgiftsUsername ?? params.username
   const commonMap = useMemo(() => new Map(commonByWinId), [commonByWinId])
   const { currentUser } = rootApi.useLoaderData()
   const search = Route.useSearch()
@@ -168,7 +174,7 @@ function UserPage() {
           />
         ) : null}
         <div className="flex-1 space-y-1">
-          <h1 className="text-2xl font-bold">{user.steamgiftsUsername}</h1>
+          <h1 className="text-2xl font-bold">{username}</h1>
           <p className="text-xs text-neutral-500">
             Steam ID {user.steamId ?? '—'} · {totalWins} wins
             {creatorStats.total > 0
@@ -193,7 +199,7 @@ function UserPage() {
           ) : null}
           <div className="flex gap-3 text-sm">
             <a
-              href={`https://www.steamgifts.com/user/${user.steamgiftsUsername}`}
+              href={`https://www.steamgifts.com/user/${username}`}
               target="_blank"
               rel="noreferrer"
               className="text-blue-700 hover:underline"
@@ -234,7 +240,7 @@ function UserPage() {
       {activeTab === 'wins' ? (
         <MyWinsPanel
           winsByStatus={winsByStatus}
-          username={user.steamgiftsUsername}
+          username={username}
           canEditStatus={canEditStatus}
           selection={selection}
           commonByWinId={commonMap}
@@ -244,7 +250,7 @@ function UserPage() {
           winsOnCreatedByStatus={winsOnCreatedByStatus}
           noWinnersGiveaways={noWinnersGiveaways}
           creatorStats={creatorStats}
-          username={user.steamgiftsUsername}
+          username={username}
           canEditStatus={canEditStatus}
           selection={selection}
           commonByWinId={commonMap}

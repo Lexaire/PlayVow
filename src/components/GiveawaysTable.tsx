@@ -47,13 +47,23 @@ export function GiveawaysTable({
                   <div className="flex items-center gap-2">
                     <GameCapsule target={g.target} />
                     <div>
-                      <Link
-                        to="/g/$slug/giveaways/$code"
-                        params={{ slug: groupSlug, code: g.steamgiftsCode }}
-                        className="text-blue-700 hover:underline"
-                      >
-                        {g.target.name}
-                      </Link>
+                      {g.steamgiftsCode !== null ? (
+                        <Link
+                          to="/g/$slug/giveaways/$code"
+                          params={{ slug: groupSlug, code: g.steamgiftsCode }}
+                          className="text-blue-700 hover:underline"
+                        >
+                          {g.target.name}
+                        </Link>
+                      ) : (
+                        <Link
+                          to="/g/$slug/giveaways/by-id/$giveawayId"
+                          params={{ slug: groupSlug, giveawayId: String(g.id) }}
+                          className="text-blue-700 hover:underline"
+                        >
+                          {g.target.name}
+                        </Link>
+                      )}
                       <TargetBadge kind={g.target.kind} />
                     </div>
                   </div>
@@ -95,13 +105,23 @@ function GiveawayCard({
       <div className="flex items-center gap-2">
         <GameCapsule target={g.target} />
         <div className="-mt-0.5 min-w-0 flex-1">
-          <Link
-            to="/g/$slug/giveaways/$code"
-            params={{ slug: groupSlug, code: g.steamgiftsCode }}
-            className="line-clamp-2 text-blue-700 hover:underline"
-          >
-            {g.target.name}
-          </Link>
+          {g.steamgiftsCode !== null ? (
+            <Link
+              to="/g/$slug/giveaways/$code"
+              params={{ slug: groupSlug, code: g.steamgiftsCode }}
+              className="line-clamp-2 text-blue-700 hover:underline"
+            >
+              {g.target.name}
+            </Link>
+          ) : (
+            <Link
+              to="/g/$slug/giveaways/by-id/$giveawayId"
+              params={{ slug: groupSlug, giveawayId: String(g.id) }}
+              className="line-clamp-2 text-blue-700 hover:underline"
+            >
+              {g.target.name}
+            </Link>
+          )}
           <TargetBadge kind={g.target.kind} />
         </div>
         <StatusBadge state={giveawayState(g, now)} />

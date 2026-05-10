@@ -83,6 +83,7 @@ export type TestSgLoginOk = {
 }
 export type TestSgLoginError =
   | ManualGroupNotFound
+  | { readonly kind: 'not_a_steamgifts_group' }
   | { readonly kind: 'cookie_not_set' }
   | { readonly kind: 'cookie_decrypt_failed' }
 
@@ -98,6 +99,9 @@ export const testSgLoginFn = createServerFn({ method: 'POST' })
     const admin = await requireAdmin()
     const group = await findGroupById(dbWrite(), data.groupId)
     if (!group) return err({ kind: 'group_not_found' })
+    if (group.steamgiftsGroupCode === null || group.steamGroupSlug === null) {
+      return err({ kind: 'not_a_steamgifts_group' })
+    }
 
     const cookieR = await getDecryptedCookie(dbWrite(), data.groupId)
     if (!cookieR.ok) {

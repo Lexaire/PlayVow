@@ -2,8 +2,10 @@ import { Link, createFileRoute, notFound, redirect } from '@tanstack/react-route
 import { z } from 'zod'
 
 import { CameraIcon, SteamIcon } from '#/components/BrandIcons'
+import { ManualEntryPanel } from '#/components/mod/ManualEntryPanel'
 import { Pagination } from '#/components/Pagination'
 import { StatusPillEditor } from '#/components/StatusPillEditor'
+import { UserProfileLink, userDisplayName } from '#/components/UserProfileLink'
 import { renderAchievements, renderCommonAchievements } from '#/components/WinsTable'
 import type { CommonAchievementProgress } from '#/domain/achievement-criteria'
 import { formatPlaytimeCompact, formatPlaytimePrecise } from '#/lib/playtime'
@@ -72,6 +74,9 @@ function ModGroupPage() {
           </Link>
         </div>
       </header>
+      {group.source === 'manual' && (
+        <ManualEntryPanel groupId={group.id} groupSlug={group.slug} />
+      )}
       {wins.rows.length === 0 ? (
         <p className="text-sm text-neutral-600">{emptyMessage}</p>
       ) : (
@@ -207,20 +212,14 @@ function ModWinCard({
         <StatusPillEditor winId={w.id} status={w.status} />
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
-        <Link
-          to="/u/$username"
-          params={{ username: w.user.steamgiftsUsername }}
-          className="text-blue-700 hover:underline"
-        >
-          {w.user.steamgiftsUsername}
-        </Link>
+        <UserProfileLink user={w.user} className="text-blue-700 hover:underline" />
         <MembershipDot steamId={w.user.steamId} inGroupSteamIds={inGroupSteamIds} />
         {w.user.steamId ? (
           <a
             href={`https://steamcommunity.com/profiles/${w.user.steamId}/groupscommon/`}
             target="_blank"
             rel="noreferrer"
-            aria-label={`Groups in common with ${w.user.steamgiftsUsername}`}
+            aria-label={`Groups in common with ${userDisplayName(w.user)}`}
             title="Groups in common"
             className="text-neutral-500 hover:text-neutral-800"
           >
@@ -231,13 +230,10 @@ function ModWinCard({
       </div>
       <p className="mt-1 text-xs text-neutral-500">
         by{' '}
-        <Link
-          to="/u/$username"
-          params={{ username: w.giveaway.creator.steamgiftsUsername }}
+        <UserProfileLink
+          user={w.giveaway.creator}
           className="hover:text-blue-700 hover:underline"
-        >
-          {w.giveaway.creator.steamgiftsUsername}
-        </Link>
+        />
       </p>
       <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-neutral-500">
         {showDeadline && (
@@ -280,20 +276,14 @@ function ModWinRow({
     <tr>
       <td className="px-3 py-2">
         <div className="flex items-center gap-1.5">
-          <Link
-            to="/u/$username"
-            params={{ username: w.user.steamgiftsUsername }}
-            className="text-blue-700 hover:underline"
-          >
-            {w.user.steamgiftsUsername}
-          </Link>
+          <UserProfileLink user={w.user} className="text-blue-700 hover:underline" />
           <MembershipDot steamId={w.user.steamId} inGroupSteamIds={inGroupSteamIds} />
           {w.user.steamId ? (
             <a
               href={`https://steamcommunity.com/profiles/${w.user.steamId}/groupscommon/`}
               target="_blank"
               rel="noreferrer"
-              aria-label={`Groups in common with ${w.user.steamgiftsUsername}`}
+              aria-label={`Groups in common with ${userDisplayName(w.user)}`}
               title="Groups in common"
               className="text-neutral-500 hover:text-neutral-800"
             >
@@ -315,14 +305,11 @@ function ModWinRow({
           </div>
           <div className="text-xs text-neutral-500">
             by{' '}
-            <Link
-              to="/u/$username"
-              params={{ username: w.giveaway.creator.steamgiftsUsername }}
-              title={w.giveaway.creator.steamgiftsUsername}
+            <UserProfileLink
+              user={w.giveaway.creator}
+              title={userDisplayName(w.giveaway.creator)}
               className="hover:text-blue-700 hover:underline"
-            >
-              {w.giveaway.creator.steamgiftsUsername}
-            </Link>
+            />
           </div>
         </div>
       </td>

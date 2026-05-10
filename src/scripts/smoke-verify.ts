@@ -23,7 +23,7 @@ const emptyStatusCounts = (): StatusCounts => ({
 type GroupReport = {
   readonly group: Group
   readonly giveawayCount: number
-  readonly mostRecentGiveaway: { readonly endedAt: Date; readonly code: string } | null
+  readonly mostRecentGiveaway: { readonly endedAt: Date; readonly code: string | null } | null
   readonly winsTotal: number
   readonly byStatus: StatusCounts
   readonly pendingWithBaseline: number

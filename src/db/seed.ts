@@ -1,12 +1,13 @@
 import { env } from '#/config/env'
 import { createDbClient } from '#/db/client'
 import { groups } from '#/db/schema'
-import type { SteamGiftsGroupCode, SteamGroupId } from '#/db/schema'
+import type { GroupSource, SteamGiftsGroupCode, SteamGroupId } from '#/db/schema'
 
 type GroupSeed = {
   readonly slug: string
   readonly name: string
   readonly playWindowDays: number
+  readonly source: GroupSource
   readonly steamgiftsGroupCode: SteamGiftsGroupCode
   readonly steamGroupId: SteamGroupId
   readonly steamGroupSlug: string
@@ -18,6 +19,7 @@ const SEED_GROUPS: ReadonlyArray<GroupSeed> = [
     slug: 'taleplay',
     name: 'TalePlay',
     playWindowDays: 90,
+    source: 'steamgifts',
     steamgiftsGroupCode: 'xBp7E' as SteamGiftsGroupCode,
     steamGroupId: '103582791467874127' as SteamGroupId,
     steamGroupSlug: 'taleplay',

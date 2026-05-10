@@ -8,6 +8,7 @@ import { SteamGiftsIcon, SteamIcon } from '#/components/BrandIcons'
 import { GameActivityFeed } from '#/components/GameActivityFeed'
 import { LocalDate } from '#/components/LocalDate'
 import { PlaytimeAchievementsChart } from '#/components/PlaytimeAchievementsChart'
+import { UserProfileLink } from '#/components/UserProfileLink'
 import {
   StatusBadge,
   renderAchievements,
@@ -134,25 +135,32 @@ function ModWinDetailPage() {
         <div className="flex items-center gap-3 text-sm text-neutral-600">
           <StatusBadge status={win.status} />
           <span>·</span>
-          <Link
-            to="/u/$username"
-            params={{ username: win.user.steamgiftsUsername }}
-            className="text-blue-700 hover:underline"
-          >
-            {win.user.steamgiftsUsername}
-          </Link>
+          <UserProfileLink user={win.user} className="text-blue-700 hover:underline" />
           <MembershipBadge status={membershipStatus} groupName={win.giveaway.groupName} />
           <span>·</span>
-          <Link
-            to="/g/$slug/giveaways/$code"
-            params={{
-              slug: win.giveaway.groupSlug,
-              code: win.giveaway.steamgiftsCode,
-            }}
-            className="text-blue-700 hover:underline"
-          >
-            Giveaway
-          </Link>
+          {win.giveaway.steamgiftsCode !== null ? (
+            <Link
+              to="/g/$slug/giveaways/$code"
+              params={{
+                slug: win.giveaway.groupSlug,
+                code: win.giveaway.steamgiftsCode,
+              }}
+              className="text-blue-700 hover:underline"
+            >
+              Giveaway
+            </Link>
+          ) : (
+            <Link
+              to="/g/$slug/giveaways/by-id/$giveawayId"
+              params={{
+                slug: win.giveaway.groupSlug,
+                giveawayId: String(win.giveaway.id),
+              }}
+              className="text-blue-700 hover:underline"
+            >
+              Giveaway
+            </Link>
+          )}
         </div>
         <div className="flex gap-3 text-sm">
           <a

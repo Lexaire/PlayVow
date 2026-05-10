@@ -69,9 +69,23 @@ export const scrapeSteamGroupMembers = async (
   const log = deps.logger.child({ groupSlug: group.slug, groupId: group.id })
   const ranAt = deps.now?.() ?? new Date()
 
-  const rosterR = await fetchAllMembers(deps.steam, group.steamGroupId, log)
+  if (group.steamGroupId === null) {
+    log.warn('steam_members_skipped_no_group_id')
+    return {
+      groupId: group.id,
+      pagesFetched: 0,
+      membersSeen: 0,
+      joined: 0,
+      stillPresent: 0,
+      left: 0,
+      stickyUntouched: 0,
+    }
+  }
+  const steamGroupId = group.steamGroupId
+
+  const rosterR = await fetchAllMembers(deps.steam, steamGroupId, log)
   if (!rosterR.ok) {
-    log.error('steam_members_scrape_failed', { gid64: group.steamGroupId })
+    log.error('steam_members_scrape_failed', { gid64: steamGroupId })
     return {
       groupId: group.id,
       pagesFetched: 0,
@@ -121,6 +135,10 @@ export const scrapeAllSteamGroupMembers = async (
   const errors: string[] = []
 
   for (const group of allGroups) {
+    // Steam group linkage is optional on manual groups (and absent on any
+    // group that hasn't filled in the Steam fields). Without an id there's
+    // nothing to scrape.
+    if (group.steamGroupId === null) continue
     try {
       const summary = await scrapeSteamGroupMembers(deps, group)
       summaries.push(summary)

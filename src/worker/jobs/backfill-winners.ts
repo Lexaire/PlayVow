@@ -52,6 +52,14 @@ export const backfillWinners = async (
       log.info('skipping_no_slug', { giveawayId: giveaway.id })
       continue
     }
+    // Manual giveaways have no SG code; the listGiveawaysNeedingWinnersBackfill
+    // query already filters on lastScrapedAt being set, which manual groups
+    // never set, so we shouldn't see one here. Belt-and-braces guard for the
+    // type narrowing.
+    if (giveaway.steamgiftsCode === null) {
+      continue
+    }
+    const sgCode = giveaway.steamgiftsCode
 
     const group = await findGroupById(deps.db, giveaway.groupId)
     if (!group) {
@@ -80,12 +88,12 @@ export const backfillWinners = async (
       sgByGroup.set(group.id, sg)
     }
 
-    const winnersR = await sg.getGiveawayWinners(giveaway.steamgiftsCode, giveaway.slug)
+    const winnersR = await sg.getGiveawayWinners(sgCode, giveaway.slug)
     if (!winnersR.ok) {
       errors += 1
       log.warn('get_winners_failed', {
         giveawayId: giveaway.id,
-        code: giveaway.steamgiftsCode,
+        code: sgCode,
         error: winnersR.error.kind,
       })
       // Don't mark settled — transient error, retry on next backfill run.
@@ -184,7 +192,7 @@ export const backfillWinners = async (
         playWindowDays: group.playWindowDays,
         target,
         giveaway: {
-          steamgiftsCode: giveaway.steamgiftsCode,
+          steamgiftsCode: sgCode,
           slug: giveaway.slug,
           quantity: giveaway.quantity,
           startedAt: giveaway.startedAt,

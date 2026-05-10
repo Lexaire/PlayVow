@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, eq, isNull } from 'drizzle-orm'
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 
@@ -28,7 +28,7 @@ export type AdminJobLatest = {
 // would be unusable on groups with thousands of pending wins.
 export type PendingWinOption = {
   readonly winId: number
-  readonly giveawayCode: string
+  readonly giveawayCode: string | null
   readonly groupSlug: string
   readonly steamAppId: number | null
   readonly lastCheckedAt: Date | null
@@ -90,7 +90,7 @@ export const listJobRunsForAdmin = createServerFn({ method: 'GET' })
         })
         .from(wins)
         .innerJoin(giveaways, eq(wins.giveawayId, giveaways.id))
-        .where(eq(wins.status, 'pending'))
+        .where(and(eq(wins.status, 'pending'), isNull(giveaways.deletedAt)))
         .orderBy(asc(wins.lastCheckedAt))
         .limit(PENDING_WIN_OPTION_LIMIT),
     ])

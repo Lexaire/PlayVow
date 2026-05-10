@@ -32,6 +32,7 @@ export type SetCookieFnError = { readonly kind: 'group_not_found' }
 export type ClearCookieFnError = { readonly kind: 'group_not_found' }
 export type TestCookieFnError =
   | { readonly kind: 'group_not_found' }
+  | { readonly kind: 'not_a_steamgifts_group' }
   | { readonly kind: 'not_set' }
   | { readonly kind: 'decrypt_failed' }
 
@@ -83,6 +84,9 @@ export const testGroupCookieFn = createServerFn({ method: 'POST' })
     const admin = await requireAdmin()
     const group = await findGroupById(dbWrite(), data.groupId)
     if (!group) return err({ kind: 'group_not_found' })
+    if (group.steamgiftsGroupCode === null || group.steamGroupSlug === null) {
+      return err({ kind: 'not_a_steamgifts_group' })
+    }
 
     const cookieR = await getDecryptedCookie(dbWrite(), data.groupId)
     if (!cookieR.ok) {

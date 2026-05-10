@@ -1,14 +1,15 @@
 import { Link } from '@tanstack/react-router'
 
-export type AdminTabKey = 'health' | 'users' | 'cookies' | 'jobs'
+export type AdminTabKey = 'health' | 'users' | 'groups' | 'cookies' | 'jobs'
 
 const TABS: ReadonlyArray<{
   readonly key: AdminTabKey
   readonly label: string
-  readonly to: '/admin' | '/admin/users' | '/admin/cookies' | '/admin/jobs'
+  readonly to: '/admin' | '/admin/users' | '/admin/groups' | '/admin/cookies' | '/admin/jobs'
 }> = [
   { key: 'health', label: 'Health', to: '/admin' },
   { key: 'users', label: 'Users', to: '/admin/users' },
+  { key: 'groups', label: 'Groups', to: '/admin/groups' },
   { key: 'cookies', label: 'Cookies', to: '/admin/cookies' },
   { key: 'jobs', label: 'Jobs', to: '/admin/jobs' },
 ]

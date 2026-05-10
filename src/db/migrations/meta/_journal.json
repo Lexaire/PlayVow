@@ -134,6 +134,13 @@
       "when": 1778357178254,
       "tag": "0018_optimal_argent",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1778374918925,
+      "tag": "0019_gorgeous_gateway",
+      "breakpoints": true
     }
   ]
 }

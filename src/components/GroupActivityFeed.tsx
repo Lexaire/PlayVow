@@ -78,13 +78,26 @@ function WinCard({ win }: { readonly win: WinView }) {
       <div className="flex items-center gap-2">
         <GameCapsule target={win.giveaway.target} />
         <div className="-mt-0.5 min-w-0 flex-1">
-          <Link
-            to="/g/$slug/giveaways/$code"
-            params={{ slug: win.giveaway.groupSlug, code: win.giveaway.steamgiftsCode }}
-            className="line-clamp-2 text-blue-700 hover:underline"
-          >
-            {win.giveaway.target.name}
-          </Link>
+          {win.giveaway.steamgiftsCode !== null ? (
+            <Link
+              to="/g/$slug/giveaways/$code"
+              params={{ slug: win.giveaway.groupSlug, code: win.giveaway.steamgiftsCode }}
+              className="line-clamp-2 text-blue-700 hover:underline"
+            >
+              {win.giveaway.target.name}
+            </Link>
+          ) : (
+            <Link
+              to="/g/$slug/giveaways/by-id/$giveawayId"
+              params={{
+                slug: win.giveaway.groupSlug,
+                giveawayId: String(win.giveaway.id),
+              }}
+              className="line-clamp-2 text-blue-700 hover:underline"
+            >
+              {win.giveaway.target.name}
+            </Link>
+          )}
           <TargetBadge kind={win.giveaway.target.kind} />
         </div>
         <WinStatusBadge status={win.status} />
@@ -126,13 +139,23 @@ function NoWinnerCard({
       <div className="flex items-center gap-2">
         <GameCapsule target={giveaway.target} />
         <div className="-mt-0.5 min-w-0 flex-1">
-          <Link
-            to="/g/$slug/giveaways/$code"
-            params={{ slug: groupSlug, code: giveaway.steamgiftsCode }}
-            className="line-clamp-2 text-blue-700 hover:underline"
-          >
-            {giveaway.target.name}
-          </Link>
+          {giveaway.steamgiftsCode !== null ? (
+            <Link
+              to="/g/$slug/giveaways/$code"
+              params={{ slug: groupSlug, code: giveaway.steamgiftsCode }}
+              className="line-clamp-2 text-blue-700 hover:underline"
+            >
+              {giveaway.target.name}
+            </Link>
+          ) : (
+            <Link
+              to="/g/$slug/giveaways/by-id/$giveawayId"
+              params={{ slug: groupSlug, giveawayId: String(giveaway.id) }}
+              className="line-clamp-2 text-blue-700 hover:underline"
+            >
+              {giveaway.target.name}
+            </Link>
+          )}
           <TargetBadge kind={giveaway.target.kind} />
         </div>
         <span className="rounded bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700">
@@ -164,6 +187,7 @@ function WinRow({ win }: { readonly win: WinView }) {
           target={win.giveaway.target}
           slug={win.giveaway.groupSlug}
           code={win.giveaway.steamgiftsCode}
+          giveawayId={win.giveaway.id}
         />
       </td>
       <td className="px-3 py-0">
@@ -198,7 +222,12 @@ function NoWinnerRow({
         </span>
       </td>
       <td className="px-3 py-0">
-        <GameCell target={giveaway.target} slug={groupSlug} code={giveaway.steamgiftsCode} />
+        <GameCell
+          target={giveaway.target}
+          slug={groupSlug}
+          code={giveaway.steamgiftsCode}
+          giveawayId={giveaway.id}
+        />
       </td>
       <td className="px-3 py-0 text-neutral-400">—</td>
       <td className="whitespace-nowrap px-3 py-0 text-neutral-700">
@@ -215,22 +244,34 @@ function GameCell({
   target,
   slug,
   code,
+  giveawayId,
 }: {
   readonly target: WinView['giveaway']['target']
   readonly slug: string
-  readonly code: string
+  readonly code: string | null
+  readonly giveawayId: number
 }) {
   return (
     <div className="flex items-center gap-2">
       <GameCapsule target={target} />
       <div>
-        <Link
-          to="/g/$slug/giveaways/$code"
-          params={{ slug, code }}
-          className="text-blue-700 hover:underline"
-        >
-          {target.name}
-        </Link>
+        {code !== null ? (
+          <Link
+            to="/g/$slug/giveaways/$code"
+            params={{ slug, code }}
+            className="text-blue-700 hover:underline"
+          >
+            {target.name}
+          </Link>
+        ) : (
+          <Link
+            to="/g/$slug/giveaways/by-id/$giveawayId"
+            params={{ slug, giveawayId: String(giveawayId) }}
+            className="text-blue-700 hover:underline"
+          >
+            {target.name}
+          </Link>
+        )}
         <TargetBadge kind={target.kind} />
       </div>
     </div>

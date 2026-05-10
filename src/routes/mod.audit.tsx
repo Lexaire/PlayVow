@@ -60,6 +60,8 @@ const ACTION_FAMILY: Readonly<Record<AuditAction, 'win' | 'group' | 'role' | 'co
   win_notes_updated: 'win',
   group_created: 'group',
   group_updated: 'group',
+  giveaway_created: 'group',
+  giveaway_deleted: 'group',
   role_granted: 'role',
   role_revoked: 'role',
   cookie_set: 'cookie',
@@ -80,6 +82,8 @@ const ACTION_LABEL: Readonly<Record<AuditAction, string>> = {
   win_notes_updated: 'win notes',
   group_created: 'group created',
   group_updated: 'group updated',
+  giveaway_created: 'giveaway created',
+  giveaway_deleted: 'giveaway deleted',
   role_granted: 'role granted',
   role_revoked: 'role revoked',
   cookie_set: 'cookie set',
@@ -91,6 +95,7 @@ const TARGET_LABEL: Readonly<Record<AuditTargetType, string>> = {
   win: 'win',
   group: 'group',
   user: 'user',
+  giveaway: 'giveaway',
 }
 
 const ACTION_GROUPS: ReadonlyArray<{

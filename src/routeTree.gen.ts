@@ -21,6 +21,7 @@ import { Route as ModAuditRouteImport } from './routes/mod.audit'
 import { Route as AppAppIdRouteImport } from './routes/app.$appId'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as AdminJobsRouteImport } from './routes/admin.jobs'
+import { Route as AdminGroupsRouteImport } from './routes/admin.groups'
 import { Route as AdminCookiesRouteImport } from './routes/admin.cookies'
 import { Route as GSlugIndexRouteImport } from './routes/g.$slug.index'
 import { Route as USteamSteamIdRouteImport } from './routes/u.steam.$steamId'
@@ -32,6 +33,7 @@ import { Route as AuthSteamCallbackRouteImport } from './routes/auth.steam.callb
 import { Route as AdminUsersUserIdRouteImport } from './routes/admin.users.$userId'
 import { Route as GSlugGiveawaysIndexRouteImport } from './routes/g.$slug.giveaways.index'
 import { Route as GSlugGiveawaysCodeRouteImport } from './routes/g.$slug.giveaways.$code'
+import { Route as GSlugGiveawaysByIdGiveawayIdRouteImport } from './routes/g.$slug.giveaways.by-id.$giveawayId'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -93,6 +95,11 @@ const AdminJobsRoute = AdminJobsRouteImport.update({
   path: '/admin/jobs',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminGroupsRoute = AdminGroupsRouteImport.update({
+  id: '/admin/groups',
+  path: '/admin/groups',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminCookiesRoute = AdminCookiesRouteImport.update({
   id: '/admin/cookies',
   path: '/admin/cookies',
@@ -148,6 +155,12 @@ const GSlugGiveawaysCodeRoute = GSlugGiveawaysCodeRouteImport.update({
   path: '/g/$slug/giveaways/$code',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GSlugGiveawaysByIdGiveawayIdRoute =
+  GSlugGiveawaysByIdGiveawayIdRouteImport.update({
+    id: '/g/$slug/giveaways/by-id/$giveawayId',
+    path: '/g/$slug/giveaways/by-id/$giveawayId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -155,6 +168,7 @@ export interface FileRoutesByFullPath {
   '/healthz': typeof HealthzRoute
   '/login': typeof LoginRoute
   '/admin/cookies': typeof AdminCookiesRoute
+  '/admin/groups': typeof AdminGroupsRoute
   '/admin/jobs': typeof AdminJobsRoute
   '/admin/users': typeof AdminUsersRouteWithChildren
   '/app/$appId': typeof AppAppIdRoute
@@ -173,6 +187,7 @@ export interface FileRoutesByFullPath {
   '/g/$slug/': typeof GSlugIndexRoute
   '/g/$slug/giveaways/$code': typeof GSlugGiveawaysCodeRoute
   '/g/$slug/giveaways/': typeof GSlugGiveawaysIndexRoute
+  '/g/$slug/giveaways/by-id/$giveawayId': typeof GSlugGiveawaysByIdGiveawayIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -180,6 +195,7 @@ export interface FileRoutesByTo {
   '/healthz': typeof HealthzRoute
   '/login': typeof LoginRoute
   '/admin/cookies': typeof AdminCookiesRoute
+  '/admin/groups': typeof AdminGroupsRoute
   '/admin/jobs': typeof AdminJobsRoute
   '/admin/users': typeof AdminUsersRouteWithChildren
   '/app/$appId': typeof AppAppIdRoute
@@ -198,6 +214,7 @@ export interface FileRoutesByTo {
   '/g/$slug': typeof GSlugIndexRoute
   '/g/$slug/giveaways/$code': typeof GSlugGiveawaysCodeRoute
   '/g/$slug/giveaways': typeof GSlugGiveawaysIndexRoute
+  '/g/$slug/giveaways/by-id/$giveawayId': typeof GSlugGiveawaysByIdGiveawayIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -206,6 +223,7 @@ export interface FileRoutesById {
   '/healthz': typeof HealthzRoute
   '/login': typeof LoginRoute
   '/admin/cookies': typeof AdminCookiesRoute
+  '/admin/groups': typeof AdminGroupsRoute
   '/admin/jobs': typeof AdminJobsRoute
   '/admin/users': typeof AdminUsersRouteWithChildren
   '/app/$appId': typeof AppAppIdRoute
@@ -224,6 +242,7 @@ export interface FileRoutesById {
   '/g/$slug/': typeof GSlugIndexRoute
   '/g/$slug/giveaways/$code': typeof GSlugGiveawaysCodeRoute
   '/g/$slug/giveaways/': typeof GSlugGiveawaysIndexRoute
+  '/g/$slug/giveaways/by-id/$giveawayId': typeof GSlugGiveawaysByIdGiveawayIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -233,6 +252,7 @@ export interface FileRouteTypes {
     | '/healthz'
     | '/login'
     | '/admin/cookies'
+    | '/admin/groups'
     | '/admin/jobs'
     | '/admin/users'
     | '/app/$appId'
@@ -251,6 +271,7 @@ export interface FileRouteTypes {
     | '/g/$slug/'
     | '/g/$slug/giveaways/$code'
     | '/g/$slug/giveaways/'
+    | '/g/$slug/giveaways/by-id/$giveawayId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -258,6 +279,7 @@ export interface FileRouteTypes {
     | '/healthz'
     | '/login'
     | '/admin/cookies'
+    | '/admin/groups'
     | '/admin/jobs'
     | '/admin/users'
     | '/app/$appId'
@@ -276,6 +298,7 @@ export interface FileRouteTypes {
     | '/g/$slug'
     | '/g/$slug/giveaways/$code'
     | '/g/$slug/giveaways'
+    | '/g/$slug/giveaways/by-id/$giveawayId'
   id:
     | '__root__'
     | '/'
@@ -283,6 +306,7 @@ export interface FileRouteTypes {
     | '/healthz'
     | '/login'
     | '/admin/cookies'
+    | '/admin/groups'
     | '/admin/jobs'
     | '/admin/users'
     | '/app/$appId'
@@ -301,6 +325,7 @@ export interface FileRouteTypes {
     | '/g/$slug/'
     | '/g/$slug/giveaways/$code'
     | '/g/$slug/giveaways/'
+    | '/g/$slug/giveaways/by-id/$giveawayId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -309,6 +334,7 @@ export interface RootRouteChildren {
   HealthzRoute: typeof HealthzRoute
   LoginRoute: typeof LoginRoute
   AdminCookiesRoute: typeof AdminCookiesRoute
+  AdminGroupsRoute: typeof AdminGroupsRoute
   AdminJobsRoute: typeof AdminJobsRoute
   AdminUsersRoute: typeof AdminUsersRouteWithChildren
   AppAppIdRoute: typeof AppAppIdRoute
@@ -326,6 +352,7 @@ export interface RootRouteChildren {
   GSlugIndexRoute: typeof GSlugIndexRoute
   GSlugGiveawaysCodeRoute: typeof GSlugGiveawaysCodeRoute
   GSlugGiveawaysIndexRoute: typeof GSlugGiveawaysIndexRoute
+  GSlugGiveawaysByIdGiveawayIdRoute: typeof GSlugGiveawaysByIdGiveawayIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -414,6 +441,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminJobsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/groups': {
+      id: '/admin/groups'
+      path: '/admin/groups'
+      fullPath: '/admin/groups'
+      preLoaderRoute: typeof AdminGroupsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/cookies': {
       id: '/admin/cookies'
       path: '/admin/cookies'
@@ -491,6 +525,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GSlugGiveawaysCodeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/g/$slug/giveaways/by-id/$giveawayId': {
+      id: '/g/$slug/giveaways/by-id/$giveawayId'
+      path: '/g/$slug/giveaways/by-id/$giveawayId'
+      fullPath: '/g/$slug/giveaways/by-id/$giveawayId'
+      preLoaderRoute: typeof GSlugGiveawaysByIdGiveawayIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -512,6 +553,7 @@ const rootRouteChildren: RootRouteChildren = {
   HealthzRoute: HealthzRoute,
   LoginRoute: LoginRoute,
   AdminCookiesRoute: AdminCookiesRoute,
+  AdminGroupsRoute: AdminGroupsRoute,
   AdminJobsRoute: AdminJobsRoute,
   AdminUsersRoute: AdminUsersRouteWithChildren,
   AppAppIdRoute: AppAppIdRoute,
@@ -529,6 +571,7 @@ const rootRouteChildren: RootRouteChildren = {
   GSlugIndexRoute: GSlugIndexRoute,
   GSlugGiveawaysCodeRoute: GSlugGiveawaysCodeRoute,
   GSlugGiveawaysIndexRoute: GSlugGiveawaysIndexRoute,
+  GSlugGiveawaysByIdGiveawayIdRoute: GSlugGiveawaysByIdGiveawayIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

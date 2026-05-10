@@ -1,6 +1,13 @@
 import { z } from 'zod'
 
-import type { AuditAction, SgCookieTestResult, UserRole, WinStatus } from '#/db/schema'
+import type {
+  AuditAction,
+  SgCookieTestResult,
+  SteamAppId,
+  SteamSubId,
+  UserRole,
+  WinStatus,
+} from '#/db/schema'
 import { AUDIT_ACTIONS, SG_COOKIE_TEST_RESULTS, USER_ROLES, WIN_STATUSES } from '#/db/schema'
 import type { Result } from '#/lib/result'
 import { err, ok } from '#/lib/result'
@@ -53,6 +60,29 @@ const GroupUpdatedSchema = z.object({
 
 export type GroupSnapshot = z.infer<typeof GroupSnapshotSchema>
 
+// Currently only emitted by the manual-giveaway flow (server/manualGroupFns.ts).
+// SG-scraped giveaways intentionally don't audit per-giveaway creates — a
+// daily scrape can land hundreds of rows and would flood the log without
+// adding signal. The `source` field exists for forward-compatibility if we
+// ever want to opt SG creates back in.
+const GiveawayCreatedSchema = z.object({
+  source: WinSourceSchema,
+  groupId: z.number().int().positive(),
+  appId: z.number().int().nonnegative().nullable(),
+  subId: z.number().int().nonnegative().nullable(),
+})
+
+// Manual-only soft-delete; SG-scraped giveaways never reach this path. We
+// record the win count + group at the time of deletion so the audit log
+// stays readable even if the giveaway/win rows are later hard-deleted from
+// the DB for storage reasons.
+const GiveawayDeletedSchema = z.object({
+  groupId: z.number().int().positive(),
+  appId: z.number().int().nonnegative().nullable(),
+  subId: z.number().int().nonnegative().nullable(),
+  winCount: z.number().int().nonnegative(),
+})
+
 export type AuditEvent =
   | { readonly kind: 'win_created'; readonly source: WinSource }
   | { readonly kind: 'win_status_changed'; readonly from: WinStatus; readonly to: WinStatus }
@@ -66,6 +96,20 @@ export type AuditEvent =
       readonly kind: 'group_updated'
       readonly before: GroupSnapshot
       readonly after: GroupSnapshot
+    }
+  | {
+      readonly kind: 'giveaway_created'
+      readonly source: WinSource
+      readonly groupId: number
+      readonly appId: SteamAppId | null
+      readonly subId: SteamSubId | null
+    }
+  | {
+      readonly kind: 'giveaway_deleted'
+      readonly groupId: number
+      readonly appId: SteamAppId | null
+      readonly subId: SteamSubId | null
+      readonly winCount: number
     }
   | {
       readonly kind: 'role_granted'
@@ -139,6 +183,32 @@ export const parseAuditEvent = (
       }
       return ok({ kind: 'group_updated', before: r.data.before, after: r.data.after })
     }
+    case 'giveaway_created': {
+      const r = GiveawayCreatedSchema.safeParse(rawPayload)
+      if (!r.success) {
+        return err({ kind: 'invalid_payload', action, issues: zodIssues(r.error) })
+      }
+      return ok({
+        kind: 'giveaway_created',
+        source: r.data.source,
+        groupId: r.data.groupId,
+        appId: r.data.appId as SteamAppId | null,
+        subId: r.data.subId as SteamSubId | null,
+      })
+    }
+    case 'giveaway_deleted': {
+      const r = GiveawayDeletedSchema.safeParse(rawPayload)
+      if (!r.success) {
+        return err({ kind: 'invalid_payload', action, issues: zodIssues(r.error) })
+      }
+      return ok({
+        kind: 'giveaway_deleted',
+        groupId: r.data.groupId,
+        appId: r.data.appId as SteamAppId | null,
+        subId: r.data.subId as SteamSubId | null,
+        winCount: r.data.winCount,
+      })
+    }
     case 'role_granted': {
       const r = RoleChangedSchema.safeParse(rawPayload)
       if (!r.success) {
@@ -205,6 +275,26 @@ export const serializeAuditEvent = (
       return {
         action: 'group_updated',
         payload: { before: event.before, after: event.after },
+      }
+    case 'giveaway_created':
+      return {
+        action: 'giveaway_created',
+        payload: {
+          source: event.source,
+          groupId: event.groupId,
+          appId: event.appId,
+          subId: event.subId,
+        },
+      }
+    case 'giveaway_deleted':
+      return {
+        action: 'giveaway_deleted',
+        payload: {
+          groupId: event.groupId,
+          appId: event.appId,
+          subId: event.subId,
+          winCount: event.winCount,
+        },
       }
     case 'role_granted':
       return {

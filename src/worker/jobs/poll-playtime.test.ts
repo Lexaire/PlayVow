@@ -127,6 +127,9 @@ const stubSteam = (
   getGlobalAchievementPercents: () => {
     throw new Error('getGlobalAchievementPercents not used in this test')
   },
+  resolveVanityUrl: () => {
+    throw new Error('resolveVanityUrl not used in this test')
+  },
 })
 
 type CallRecord = {
@@ -158,6 +161,9 @@ const recordingSteam = (
     },
     getGlobalAchievementPercents: () => {
       throw new Error('getGlobalAchievementPercents not used in this test')
+    },
+    resolveVanityUrl: () => {
+      throw new Error('resolveVanityUrl not used in this test')
     },
   }
   return { client, calls }
@@ -340,6 +346,9 @@ describe('pollPlaytime', () => {
       },
       getGlobalAchievementPercents: () => {
         throw new Error('getGlobalAchievementPercents not used in this test')
+      },
+      resolveVanityUrl: () => {
+        throw new Error('resolveVanityUrl not used in this test')
       },
     }
     await seed(db)

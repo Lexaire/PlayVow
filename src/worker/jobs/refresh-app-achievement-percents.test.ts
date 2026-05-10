@@ -59,6 +59,9 @@ const recordingSteam = (
     getStoreItems: () => {
       throw new Error('getStoreItems not used in this test')
     },
+    resolveVanityUrl: () => {
+      throw new Error('resolveVanityUrl not used in this test')
+    },
   }
   return { client, calls }
 }

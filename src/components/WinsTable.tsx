@@ -230,39 +230,59 @@ const GameCapsule = ({ target }: { readonly target: GiveawayTargetView }) => {
   )
 }
 
-export const UserLink = ({ user }: { readonly user: WinUserSummary }) => (
-  <span className="inline-flex items-center gap-1.5">
-    <Link
-      to="/u/$username"
-      params={{ username: user.steamgiftsUsername }}
-      className="text-blue-700 hover:underline"
-    >
-      {user.steamgiftsUsername}
-    </Link>
-    <a
-      href={`https://www.steamgifts.com/user/${user.steamgiftsUsername}`}
-      target="_blank"
-      rel="noreferrer"
-      title="SteamGifts profile"
-      aria-label={`${user.steamgiftsUsername} on SteamGifts`}
-      className="text-neutral-400 transition-colors hover:text-emerald-700"
-    >
-      <SteamGiftsIcon />
-    </a>
-    {user.steamId !== null ? (
-      <a
-        href={`https://steamcommunity.com/profiles/${user.steamId}`}
-        target="_blank"
-        rel="noreferrer"
-        title="Steam profile"
-        aria-label={`${user.steamgiftsUsername} on Steam`}
-        className="text-neutral-400 transition-colors hover:text-blue-700"
-      >
-        <SteamIcon />
-      </a>
-    ) : null}
-  </span>
-)
+export const UserLink = ({ user }: { readonly user: WinUserSummary }) => {
+  // Manual-giveaway winners (resolved by SteamID) and Steam-only mods may
+  // not have an SG username. The SG profile icon is suppressed in that
+  // case; the in-app link falls back to /u/steam/$steamId.
+  const displayName = user.steamgiftsUsername ?? `Steam ${user.steamId?.slice(-6) ?? '?'}`
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {user.steamgiftsUsername !== null ? (
+        <Link
+          to="/u/$username"
+          params={{ username: user.steamgiftsUsername }}
+          className="text-blue-700 hover:underline"
+        >
+          {displayName}
+        </Link>
+      ) : user.steamId !== null ? (
+        <Link
+          to="/u/steam/$steamId"
+          params={{ steamId: user.steamId }}
+          className="text-blue-700 hover:underline"
+        >
+          {displayName}
+        </Link>
+      ) : (
+        <span>{displayName}</span>
+      )}
+      {user.steamgiftsUsername !== null ? (
+        <a
+          href={`https://www.steamgifts.com/user/${user.steamgiftsUsername}`}
+          target="_blank"
+          rel="noreferrer"
+          title="SteamGifts profile"
+          aria-label={`${user.steamgiftsUsername} on SteamGifts`}
+          className="text-neutral-400 transition-colors hover:text-emerald-700"
+        >
+          <SteamGiftsIcon />
+        </a>
+      ) : null}
+      {user.steamId !== null ? (
+        <a
+          href={`https://steamcommunity.com/profiles/${user.steamId}`}
+          target="_blank"
+          rel="noreferrer"
+          title="Steam profile"
+          aria-label={`${displayName} on Steam`}
+          className="text-neutral-400 transition-colors hover:text-blue-700"
+        >
+          <SteamIcon />
+        </a>
+      ) : null}
+    </span>
+  )
+}
 
 export function StatusBadge({ status }: { readonly status: WinStatus }) {
   return (
@@ -407,13 +427,29 @@ export function WinsTable({
                     <div className="flex items-center gap-2">
                       <GameCapsule target={w.giveaway.target} />
                       <div>
-                        <Link
-                          to="/g/$slug/giveaways/$code"
-                          params={{ slug: w.giveaway.groupSlug, code: w.giveaway.steamgiftsCode }}
-                          className="text-blue-700 hover:underline"
-                        >
-                          {w.giveaway.target.name}
-                        </Link>
+                        {w.giveaway.steamgiftsCode !== null ? (
+                          <Link
+                            to="/g/$slug/giveaways/$code"
+                            params={{
+                              slug: w.giveaway.groupSlug,
+                              code: w.giveaway.steamgiftsCode,
+                            }}
+                            className="text-blue-700 hover:underline"
+                          >
+                            {w.giveaway.target.name}
+                          </Link>
+                        ) : (
+                          <Link
+                            to="/g/$slug/giveaways/by-id/$giveawayId"
+                            params={{
+                              slug: w.giveaway.groupSlug,
+                              giveawayId: String(w.giveaway.id),
+                            }}
+                            className="text-blue-700 hover:underline"
+                          >
+                            {w.giveaway.target.name}
+                          </Link>
+                        )}
                         <TargetBadge kind={w.giveaway.target.kind} />
                       </div>
                     </div>
@@ -501,13 +537,26 @@ function WinCard({
           <>
             <GameCapsule target={w.giveaway.target} />
             <div className="-mt-0.5 min-w-0 flex-1">
-              <Link
-                to="/g/$slug/giveaways/$code"
-                params={{ slug: w.giveaway.groupSlug, code: w.giveaway.steamgiftsCode }}
-                className="line-clamp-2 text-blue-700 hover:underline"
-              >
-                {w.giveaway.target.name}
-              </Link>
+              {w.giveaway.steamgiftsCode !== null ? (
+                <Link
+                  to="/g/$slug/giveaways/$code"
+                  params={{ slug: w.giveaway.groupSlug, code: w.giveaway.steamgiftsCode }}
+                  className="line-clamp-2 text-blue-700 hover:underline"
+                >
+                  {w.giveaway.target.name}
+                </Link>
+              ) : (
+                <Link
+                  to="/g/$slug/giveaways/by-id/$giveawayId"
+                  params={{
+                    slug: w.giveaway.groupSlug,
+                    giveawayId: String(w.giveaway.id),
+                  }}
+                  className="line-clamp-2 text-blue-700 hover:underline"
+                >
+                  {w.giveaway.target.name}
+                </Link>
+              )}
               <TargetBadge kind={w.giveaway.target.kind} />
             </div>
           </>

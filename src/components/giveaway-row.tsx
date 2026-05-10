@@ -1,6 +1,6 @@
-import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 
+import { UserProfileLink } from '#/components/UserProfileLink'
 import { smallCapsuleSmallSize, steamAssetUrl } from '#/lib/steam-assets'
 import type { GiveawayCreatorSummary, GiveawayView } from '#/server/queries'
 
@@ -80,11 +80,5 @@ export const GameCapsule = ({ target }: { readonly target: GiveawayView['target'
 }
 
 export const CreatorLink = ({ creator }: { readonly creator: GiveawayCreatorSummary }) => (
-  <Link
-    to="/u/$username"
-    params={{ username: creator.steamgiftsUsername }}
-    className="text-blue-700 hover:underline"
-  >
-    {creator.steamgiftsUsername}
-  </Link>
+  <UserProfileLink user={creator} className="text-blue-700 hover:underline" />
 )

@@ -105,6 +105,26 @@ export const scrapeGroup = async (
   const scrapedAt = now()
   const MAX_PAGES = 10
 
+  // SG scrape requires the SG group code and Steam group slug. scrapeAllGroups
+  // already filters by source='steamgifts' so this is just a typing guard
+  // (and a defensive log if the caller ever invokes us on a misconfigured row).
+  const { steamgiftsGroupCode, steamGroupSlug } = group
+  if (steamgiftsGroupCode === null || steamGroupSlug === null) {
+    log.warn('scrape_skipped_missing_sg_fields')
+    return {
+      groupId: group.id,
+      pagesScraped: 0,
+      giveawaysSeen: 0,
+      giveawaysCreatedOrUpdated: 0,
+      giveawaysSkipped: 0,
+      creatorErrors: 0,
+      winnersSeen: 0,
+      winsCreated: 0,
+      winsExisting: 0,
+      winnerErrors: 0,
+    }
+  }
+
   let pagesScraped = 0
   let giveawaysSeen = 0
   let giveawaysCreatedOrUpdated = 0
@@ -124,11 +144,7 @@ export const scrapeGroup = async (
   let firstFailure: SgCookieTestResult | null = null
 
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const pageR = await deps.sg.getGroupGiveaways(
-      group.steamgiftsGroupCode,
-      group.steamGroupSlug,
-      page,
-    )
+    const pageR = await deps.sg.getGroupGiveaways(steamgiftsGroupCode, steamGroupSlug, page)
     if (!pageR.ok) {
       log.error('sg_fetch_failed', { kind: pageR.error.kind, page })
       break
@@ -404,7 +420,10 @@ export type ScrapeAllGroupsDeps = {
 export const scrapeAllGroups = async (
   deps: ScrapeAllGroupsDeps,
 ): Promise<ReadonlyArray<ScrapeGroupSummary>> => {
-  const groups = await listGroups(deps.db)
+  // Manual groups have no SG presence to scrape. They share the giveaways/wins
+  // tables, so polling and mod tooling work on their wins, but the SG scrape
+  // path is skipped entirely.
+  const groups = await listGroups(deps.db, { source: 'steamgifts' })
   const summaries: ScrapeGroupSummary[] = []
   for (const group of groups) {
     const sg = await deps.sgClientForGroup(group.id)

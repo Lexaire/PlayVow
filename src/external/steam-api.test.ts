@@ -6,9 +6,11 @@ import type { SteamAppId, SteamId } from '#/db/schema'
 import type { Fetcher } from '#/external/http'
 import {
   createSteamApiClient,
+  extractVanityHandle,
   parseGlobalAchievementPercents,
   parseOwnedGames,
   parsePlayerAchievements,
+  parseResolveVanity,
 } from '#/external/steam-api'
 
 const fixture = (rel: string): string =>
@@ -232,5 +234,84 @@ describe('createSteamApiClient', () => {
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.kind).toBe('http_status')
+  })
+
+  it('resolveVanityUrl normalizes a profile URL and returns a SteamID on success', async () => {
+    const seen: string[] = []
+    const fetcher: Fetcher = (url) => {
+      seen.push(url)
+      return Promise.resolve(
+        okJson({ response: { steamid: '76561197960287930', success: 1 } }),
+      )
+    }
+    const client = createSteamApiClient({ apiKey: 'KEY', fetcher })
+    const r = await client.resolveVanityUrl('https://steamcommunity.com/id/gabelogannewell/')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toBe('76561197960287930')
+    expect(seen[0]).toContain('ResolveVanityURL')
+    expect(seen[0]).toContain('vanityurl=gabelogannewell')
+  })
+
+  it('resolveVanityUrl returns not_found when Steam reports success != 1', async () => {
+    const fetcher: Fetcher = () =>
+      Promise.resolve(okJson({ response: { success: 42, message: 'No match' } }))
+    const client = createSteamApiClient({ apiKey: 'KEY', fetcher })
+    const r = await client.resolveVanityUrl('definitelynotreal')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.kind).toBe('not_found')
+  })
+
+  it('resolveVanityUrl rejects /profiles/<id64> URLs without making a request', async () => {
+    let called = 0
+    const fetcher: Fetcher = () => {
+      called += 1
+      return Promise.resolve(okJson({}))
+    }
+    const client = createSteamApiClient({ apiKey: 'KEY', fetcher })
+    const r = await client.resolveVanityUrl('https://steamcommunity.com/profiles/76561197960287930')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.kind).toBe('not_found')
+    expect(called).toBe(0)
+  })
+})
+
+describe('extractVanityHandle', () => {
+  it.each([
+    ['gabelogannewell', 'gabelogannewell'],
+    ['  gabe  ', 'gabe'],
+    ['https://steamcommunity.com/id/gabelogannewell', 'gabelogannewell'],
+    ['https://steamcommunity.com/id/gabelogannewell/', 'gabelogannewell'],
+    ['steamcommunity.com/id/gabelogannewell', 'gabelogannewell'],
+    ['STEAMCOMMUNITY.COM/id/gabe', 'gabe'],
+  ])('extracts %s -> %s', (input, expected) => {
+    expect(extractVanityHandle(input)).toBe(expected)
+  })
+
+  it.each([
+    'https://steamcommunity.com/profiles/76561197960287930',
+    'https://example.com/foo',
+    '',
+    '   ',
+  ])('rejects %s', (input) => {
+    expect(extractVanityHandle(input)).toBeNull()
+  })
+})
+
+describe('parseResolveVanity', () => {
+  it('returns the SteamID when success=1', () => {
+    const r = parseResolveVanity('foo', { response: { steamid: '76561197960287930', success: 1 } })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toBe('76561197960287930')
+  })
+
+  it('returns not_found when success != 1', () => {
+    const r = parseResolveVanity('foo', { response: { success: 42 } })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.kind).toBe('not_found')
   })
 })

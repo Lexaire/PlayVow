@@ -18,6 +18,8 @@ export const AUDIT_ACTIONS = [
   'win_notes_updated',
   'group_created',
   'group_updated',
+  'giveaway_created',
+  'giveaway_deleted',
   'role_granted',
   'role_revoked',
   'cookie_set',
@@ -26,8 +28,11 @@ export const AUDIT_ACTIONS = [
 ] as const
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]
 
-export const AUDIT_TARGET_TYPES = ['win', 'group', 'user'] as const
+export const AUDIT_TARGET_TYPES = ['win', 'group', 'user', 'giveaway'] as const
 export type AuditTargetType = (typeof AUDIT_TARGET_TYPES)[number]
+
+export const GROUP_SOURCES = ['steamgifts', 'manual'] as const
+export type GroupSource = (typeof GROUP_SOURCES)[number]
 
 export const SG_COOKIE_TEST_RESULTS = [
   'ok',
@@ -54,9 +59,15 @@ export const groups = sqliteTable('groups', {
   slug: text('slug').notNull().unique(),
   name: text('name').notNull(),
   playWindowDays: integer('play_window_days').notNull(),
-  steamgiftsGroupCode: text('steamgifts_group_code').$type<SteamGiftsGroupCode>().notNull(),
-  steamGroupId: text('steam_group_id').$type<SteamGroupId>().notNull(),
-  steamGroupSlug: text('steam_group_slug').notNull(),
+  // 'steamgifts' = scraped from a SteamGifts group; SG fields below are
+  // required. 'manual' = admin-created; mods add giveaways/wins by hand and
+  // the scrape job skips it. Steam group linkage is independent of source —
+  // a manual group can still set steamGroupId/steamGroupSlug to opt into
+  // roster/kick tracking.
+  source: text('source', { enum: GROUP_SOURCES }).notNull().default('steamgifts'),
+  steamgiftsGroupCode: text('steamgifts_group_code').$type<SteamGiftsGroupCode>(),
+  steamGroupId: text('steam_group_id').$type<SteamGroupId>(),
+  steamGroupSlug: text('steam_group_slug'),
   description: text('description'),
   lastScrapedAt: timestamp('last_scraped_at'),
   // Denormalized win counters maintained by the wins repo (insertWinIfAbsent
@@ -168,7 +179,10 @@ export const giveaways = sqliteTable(
     groupId: integer('group_id')
       .notNull()
       .references(() => groups.id),
-    steamgiftsCode: text('steamgifts_code').$type<SteamGiftsGiveawayCode>().notNull(),
+    // Null for manually-added giveaways on a group with source='manual'.
+    // SG-scraped giveaways always have a code; uniqueness is enforced by a
+    // partial index further down.
+    steamgiftsCode: text('steamgifts_code').$type<SteamGiftsGiveawayCode>(),
     steamAppId: integer('steam_app_id')
       .$type<SteamAppId>()
       .references(() => steamApps.appId),
@@ -184,9 +198,17 @@ export const giveaways = sqliteTable(
     scrapedAt: timestamp('scraped_at').notNull(),
     slug: text('slug'),
     winnersScrapedAt: timestamp('winners_scraped_at'),
+    // Soft-delete marker for manual giveaways. Admin-only delete from the
+    // /g/$slug/giveaways/by-id/$id detail page; SG-scraped giveaways are
+    // never soft-deleted (they'd just come back on the next scrape).
+    // Read paths filter on `deleted_at IS NULL`; the audit log row is the
+    // permanent record of the action.
+    deletedAt: timestamp('deleted_at'),
   },
   (t) => [
-    uniqueIndex('giveaways_group_code_uniq').on(t.groupId, t.steamgiftsCode),
+    uniqueIndex('giveaways_group_code_uniq')
+      .on(t.groupId, t.steamgiftsCode)
+      .where(sql`steamgifts_code IS NOT NULL`),
     index('giveaways_group_ended_idx').on(t.groupId, t.endedAt),
     // Creator-stats and user-page queries filter by creatorUserId, often with
     // an additional endedAt predicate (active count) or an endedAt sort

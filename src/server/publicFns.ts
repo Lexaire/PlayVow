@@ -17,6 +17,7 @@ import {
   DEFAULT_PAGE_SIZE,
   getGamePageData,
   getGiveawayPageData,
+  getGiveawayPageDataById,
   getGroupOverviewPage,
   getSubPageData,
   getUserPageDataByUsername,
@@ -149,6 +150,24 @@ export const fetchGiveawayPage = createServerFn({ method: 'GET' })
   .handler(async ({ data }) =>
     giveawayPageCache.get(`${data.slug}:${data.code}`, () =>
       getGiveawayPageData(db(), data.slug, data.code as SteamGiftsGiveawayCode),
+    ),
+  )
+
+// Manual giveaways have no SteamGifts code, so they're addressed by their
+// internal id. Same cache TTL semantics as the by-code path; key prefixed
+// with `id:` to avoid collisions.
+const GiveawayByIdSchema = z.object({
+  slug: z.string().min(1).max(64),
+  giveawayId: z.coerce.number().int().positive(),
+})
+
+export const fetchGiveawayPageById = createServerFn({ method: 'GET' })
+  .inputValidator((input: { slug: string; giveawayId: number }) =>
+    GiveawayByIdSchema.parse(input),
+  )
+  .handler(async ({ data }) =>
+    giveawayPageCache.get(`${data.slug}:id:${String(data.giveawayId)}`, () =>
+      getGiveawayPageDataById(db(), data.slug, data.giveawayId),
     ),
   )
 

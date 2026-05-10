@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lt, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, isNull, lt, sql } from 'drizzle-orm'
 
 import type { Db, DbOrTx } from '#/db/client'
 import { withTransaction } from '#/db/client'
@@ -118,12 +118,37 @@ export const listRecentWinsByGroup = async (
     })
     .from(wins)
     .innerJoin(giveaways, eq(wins.giveawayId, giveaways.id))
-    .where(eq(giveaways.groupId, groupId))
+    .where(and(eq(giveaways.groupId, groupId), isNull(giveaways.deletedAt)))
     .orderBy(desc(wins.wonAt))
     .limit(limit)
 
+// Wins on soft-deleted giveaways are filtered out so user profiles, polling,
+// and mod views don't surface entries the admin removed. The DB rows stay
+// (preserving observation history); reads bridge through giveaways.deletedAt.
 export const listWinsByUser = async (db: DbOrTx, userId: number): Promise<ReadonlyArray<Win>> =>
-  db.select().from(wins).where(eq(wins.userId, userId)).orderBy(desc(wins.wonAt))
+  db
+    .select({
+      id: wins.id,
+      giveawayId: wins.giveawayId,
+      userId: wins.userId,
+      wonAt: wins.wonAt,
+      playDeadline: wins.playDeadline,
+      playtimeAtWinMinutes: wins.playtimeAtWinMinutes,
+      currentPlaytimeMinutes: wins.currentPlaytimeMinutes,
+      playtime2WeeksMinutes: wins.playtime2WeeksMinutes,
+      hasReview: wins.hasReview,
+      screenshotCount: wins.screenshotCount,
+      achievementsUnlocked: wins.achievementsUnlocked,
+      achievementsTotal: wins.achievementsTotal,
+      status: wins.status,
+      lastCheckedAt: wins.lastCheckedAt,
+      resolvedAt: wins.resolvedAt,
+      modNotes: wins.modNotes,
+    })
+    .from(wins)
+    .innerJoin(giveaways, eq(wins.giveawayId, giveaways.id))
+    .where(and(eq(wins.userId, userId), isNull(giveaways.deletedAt)))
+    .orderBy(desc(wins.wonAt))
 
 export const listWinsByGiveaway = async (
   db: DbOrTx,
@@ -158,21 +183,74 @@ export const listPendingPastDeadlineByGroup = async (
     .from(wins)
     .innerJoin(giveaways, eq(wins.giveawayId, giveaways.id))
     .where(
-      and(eq(giveaways.groupId, groupId), eq(wins.status, 'pending'), lt(wins.playDeadline, now)),
+      and(
+        eq(giveaways.groupId, groupId),
+        eq(wins.status, 'pending'),
+        lt(wins.playDeadline, now),
+        isNull(giveaways.deletedAt),
+      ),
     )
     .orderBy(asc(wins.playDeadline))
 
+// Polling skips wins whose giveaway was soft-deleted — no point burning
+// Steam API quota on tracking that won't surface in any view.
 export const listPendingForPolling = async (db: DbOrTx): Promise<ReadonlyArray<Win>> =>
-  db.select().from(wins).where(eq(wins.status, 'pending')).orderBy(asc(wins.lastCheckedAt))
+  db
+    .select({
+      id: wins.id,
+      giveawayId: wins.giveawayId,
+      userId: wins.userId,
+      wonAt: wins.wonAt,
+      playDeadline: wins.playDeadline,
+      playtimeAtWinMinutes: wins.playtimeAtWinMinutes,
+      currentPlaytimeMinutes: wins.currentPlaytimeMinutes,
+      playtime2WeeksMinutes: wins.playtime2WeeksMinutes,
+      hasReview: wins.hasReview,
+      screenshotCount: wins.screenshotCount,
+      achievementsUnlocked: wins.achievementsUnlocked,
+      achievementsTotal: wins.achievementsTotal,
+      status: wins.status,
+      lastCheckedAt: wins.lastCheckedAt,
+      resolvedAt: wins.resolvedAt,
+      modNotes: wins.modNotes,
+    })
+    .from(wins)
+    .innerJoin(giveaways, eq(wins.giveawayId, giveaways.id))
+    .where(and(eq(wins.status, 'pending'), isNull(giveaways.deletedAt)))
+    .orderBy(asc(wins.lastCheckedAt))
 
 export const listPendingForPlaytimePoll = async (
   db: DbOrTx,
   deadlineCutoff: Date,
 ): Promise<ReadonlyArray<Win>> =>
   db
-    .select()
+    .select({
+      id: wins.id,
+      giveawayId: wins.giveawayId,
+      userId: wins.userId,
+      wonAt: wins.wonAt,
+      playDeadline: wins.playDeadline,
+      playtimeAtWinMinutes: wins.playtimeAtWinMinutes,
+      currentPlaytimeMinutes: wins.currentPlaytimeMinutes,
+      playtime2WeeksMinutes: wins.playtime2WeeksMinutes,
+      hasReview: wins.hasReview,
+      screenshotCount: wins.screenshotCount,
+      achievementsUnlocked: wins.achievementsUnlocked,
+      achievementsTotal: wins.achievementsTotal,
+      status: wins.status,
+      lastCheckedAt: wins.lastCheckedAt,
+      resolvedAt: wins.resolvedAt,
+      modNotes: wins.modNotes,
+    })
     .from(wins)
-    .where(and(eq(wins.status, 'pending'), gte(wins.playDeadline, deadlineCutoff)))
+    .innerJoin(giveaways, eq(wins.giveawayId, giveaways.id))
+    .where(
+      and(
+        eq(wins.status, 'pending'),
+        gte(wins.playDeadline, deadlineCutoff),
+        isNull(giveaways.deletedAt),
+      ),
+    )
     .orderBy(asc(wins.lastCheckedAt))
 
 export const updateWinStatus = async (

@@ -134,6 +134,18 @@ const GlobalAchievementPercentsResponseSchema = z.object({
   }),
 })
 
+// ResolveVanityURL response. success: 1 = found, steamid is set; 42 = not
+// found; 1 with no steamid is theoretically possible but we treat that the
+// same as not_found. The docs list other codes but in practice Steam only
+// uses 1 and 42 for this endpoint.
+const ResolveVanityResponseSchema = z.object({
+  response: z.object({
+    success: z.number().int(),
+    steamid: z.string().optional(),
+    message: z.string().optional(),
+  }),
+})
+
 export type GlobalAchievementPercent = {
   readonly apiname: string
   readonly percent: number
@@ -232,6 +244,10 @@ export type SteamApiError =
   | { readonly kind: 'invalid_json'; readonly message: string }
   | { readonly kind: 'invalid_shape'; readonly issues: ReadonlyArray<string> }
 
+export type ResolveVanityError =
+  | SteamApiError
+  | { readonly kind: 'not_found'; readonly vanity: string }
+
 const safeJsonParse = (text: string): Result<unknown, SteamApiError> => {
   try {
     return ok(JSON.parse(text) as unknown)
@@ -281,6 +297,40 @@ export const parseGlobalAchievementPercents = (
   }
   const list = parsed.data.achievementpercentages.achievements ?? []
   return ok(list.map((a) => ({ apiname: a.name, percent: a.percent })))
+}
+
+// Strips a steamcommunity profile URL down to its vanity segment. Accepts:
+//   https://steamcommunity.com/id/foo  → foo
+//   steamcommunity.com/id/foo/         → foo
+//   foo                                → foo
+// Returns null if the input doesn't look like a vanity at all (e.g. a /profiles/<id64>
+// URL — caller should pull the SteamID directly from that path instead).
+export const extractVanityHandle = (raw: string): string | null => {
+  const trimmed = raw.trim()
+  if (trimmed.length === 0) return null
+  const match = /(?:steamcommunity\.com\/id\/)([^/?#]+)/i.exec(trimmed)
+  if (match?.[1]) return match[1]
+  // Reject anything that looks like a URL but didn't match — most likely a
+  // /profiles/<id64> link or an unrelated host.
+  if (trimmed.includes('/')) return null
+  return trimmed
+}
+
+const VANITY_SUCCESS = 1
+
+export const parseResolveVanity = (
+  vanity: string,
+  raw: unknown,
+): Result<SteamId, ResolveVanityError> => {
+  const parsed = ResolveVanityResponseSchema.safeParse(raw)
+  if (!parsed.success) {
+    return err({ kind: 'invalid_shape', issues: zodIssues(parsed.error) })
+  }
+  const r = parsed.data.response
+  if (r.success !== VANITY_SUCCESS || !r.steamid) {
+    return err({ kind: 'not_found', vanity })
+  }
+  return ok(r.steamid as SteamId)
 }
 
 const ITEM_TYPE_APP = 0
@@ -452,6 +502,16 @@ export type SteamApiClient = {
   readonly getStoreItems: (
     requests: ReadonlyArray<StoreItemRequest>,
   ) => Promise<Result<ReadonlyArray<StoreItemEntry>, SteamApiError>>
+  /**
+   * Resolves a Steam vanity (custom URL) to a SteamID64. Accepts either a
+   * raw handle ("gabelogannewell") or a full profile URL
+   * ("https://steamcommunity.com/id/gabelogannewell"); the input is normalized
+   * before the API call. Returns `not_found` when Steam reports success != 1
+   * (no profile owns that vanity).
+   */
+  readonly resolveVanityUrl: (
+    vanity: string,
+  ) => Promise<Result<SteamId, ResolveVanityError>>
 }
 
 export type SteamApiClientConfig = {
@@ -536,6 +596,22 @@ export const createSteamApiClient = (cfg: SteamApiClientConfig): SteamApiClient 
       const json = safeJsonParse(body)
       if (!json.ok) return json
       return parseGlobalAchievementPercents(json.value)
+    },
+    resolveVanityUrl: async (vanity) => {
+      const handle = extractVanityHandle(vanity)
+      if (handle === null) {
+        return err({ kind: 'not_found', vanity })
+      }
+      const url = buildUrl('/ISteamUser/ResolveVanityURL/v1/', {
+        key: cfg.apiKey,
+        vanityurl: handle,
+        format: 'json',
+      })
+      const text = await fetchText(fetcher, url)
+      if (!text.ok) return text
+      const json = safeJsonParse(text.value)
+      if (!json.ok) return json
+      return parseResolveVanity(handle, json.value)
     },
     getStoreItems: async (requests) => {
       if (requests.length === 0) return ok([])
