@@ -11,6 +11,7 @@ import {
   runScrapeAllFn,
   runScrapeSteamMembersFn,
   scrapeOneGroupFn,
+  syncManualSteamUserFn,
   syncOneAppFn,
 } from '#/server/manualRunFns'
 import type { PendingWinOption } from '#/server/jobsFns'
@@ -48,6 +49,7 @@ export function ManualRuns({
   const scrapeOneGroup = useServerFn(scrapeOneGroupFn)
   const pollOneWin = useServerFn(pollOneWinFn)
   const syncOneApp = useServerFn(syncOneAppFn)
+  const syncManualSteamUser = useServerFn(syncManualSteamUserFn)
   const runScrapeAll = useServerFn(runScrapeAllFn)
   const runPollAll = useServerFn(runPollAllFn)
   const runBackfillWinners = useServerFn(runBackfillWinnersFn)
@@ -59,6 +61,7 @@ export function ManualRuns({
   const [groupId, setGroupId] = useState<number | null>(groups[0]?.id ?? null)
   const [winId, setWinId] = useState<number | null>(pendingWins[0]?.winId ?? null)
   const [appIdInput, setAppIdInput] = useState('')
+  const [steamUserInput, setSteamUserInput] = useState('')
 
   const wrap = async (key: string, body: () => Promise<Msg>) => {
     setPending(key)
@@ -117,6 +120,20 @@ export function ManualRuns({
         return formatBusyOrNotFound(r.error)
       }
       return formatSyncOutcome(r.value.result)
+    })
+  }
+
+  const onSyncSteamUser = () => {
+    const trimmed = steamUserInput.trim()
+    if (trimmed.length === 0) {
+      setMsg({ tone: 'err', text: 'Enter a Steam ID, vanity URL, or vanity handle.' })
+      return
+    }
+    void wrap('syncSteamUser', async () => {
+      const r = await syncManualSteamUser({ data: { input: trimmed } })
+      if (!r.ok) return formatSyncSteamUserError(r.error)
+      setSteamUserInput('')
+      return formatSyncSteamUserOk(r.value)
     })
   }
 
@@ -245,6 +262,27 @@ export function ManualRuns({
             onClick={onPollOneWin}
             busy={pending === 'pollOne'}
             disabled={winId === null}
+          />
+        </Section>
+
+        <Section
+          title="One Steam user"
+          caption="Look up a Steam profile and create or update its row in the database. Useful for seeding a user before they appear in any giveaway (e.g. so you can grant them mod access by Steam ID)."
+        >
+          <input
+            type="text"
+            className="w-full rounded border border-neutral-300 px-2 py-1 font-mono text-sm"
+            placeholder="SteamID64, vanity URL, or vanity handle"
+            value={steamUserInput}
+            onChange={(e) => {
+              setSteamUserInput(e.target.value)
+            }}
+          />
+          <Action
+            label="Sync Steam user"
+            help="Fetches persona name, avatar, and visibility from the Steam Community profile page."
+            onClick={onSyncSteamUser}
+            busy={pending === 'syncSteamUser'}
           />
         </Section>
 
@@ -418,6 +456,40 @@ const formatSyncOutcome = (kind: 'synced' | 'not_found' | 'fetch_failed'): Msg =
     return { tone: 'warn', text: 'Steam does not recognize that app id.' }
   }
   return { tone: 'err', text: 'Steam refused the request. Try again in a moment.' }
+}
+
+const formatSyncSteamUserOk = (v: {
+  readonly steamId: string
+  readonly personaName: string
+  readonly profileVisibility: 1 | 3
+  readonly wasInsert: boolean
+}): Msg => {
+  const verb = v.wasInsert ? 'Created' : 'Updated'
+  const visibility = v.profileVisibility === 3 ? 'public' : 'private'
+  return {
+    tone: 'ok',
+    text: `${verb} user ${v.personaName} (${v.steamId}, ${visibility} profile).`,
+  }
+}
+
+const formatSyncSteamUserError = (e: {
+  readonly kind: 'invalid_input' | 'profile_lookup_failed'
+  readonly cause?: { readonly kind: string; readonly status?: number; readonly message?: string }
+}): Msg => {
+  if (e.kind === 'invalid_input') {
+    return {
+      tone: 'err',
+      text: 'Could not parse that input. Use a 17-digit SteamID64, a steamcommunity.com profile URL, or a vanity handle.',
+    }
+  }
+  const cause = e.cause
+  if (cause?.kind === 'not_found') {
+    return { tone: 'warn', text: 'Steam returned no profile for that input.' }
+  }
+  if (cause?.kind === 'http_status') {
+    return { tone: 'err', text: `Steam refused the request (HTTP ${String(cause.status)}).` }
+  }
+  return { tone: 'err', text: `Profile lookup failed: ${cause?.kind ?? 'unknown'}` }
 }
 
 const formatBusyOrNotFound = (e: {

@@ -21,6 +21,7 @@ import { computePlayDeadline } from '#/domain/wins'
 export type ScrapedSgUser = {
   readonly steamgiftsUsername: SteamGiftsUsername
   readonly steamId: SteamId | null
+  readonly personaName?: string | null
   readonly avatarUrl?: string | null
   readonly profileVisibility?: ProfileVisibility | null
 }
@@ -71,6 +72,7 @@ const upsertScrapedUser = async (tx: DbOrTx, u: ScrapedSgUser, syncedAt: Date): 
   upsertUserBySgUsername(tx, {
     steamgiftsUsername: u.steamgiftsUsername,
     steamId: u.steamId,
+    personaName: u.personaName ?? null,
     avatarUrl: u.avatarUrl ?? null,
     profileVisibility: u.profileVisibility ?? null,
     lastSyncedAt: syncedAt,

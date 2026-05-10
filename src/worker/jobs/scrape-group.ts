@@ -66,6 +66,7 @@ const ensureSgUser = async (
     return ok({
       steamgiftsUsername: cached.steamgiftsUsername,
       steamId: cached.steamId,
+      personaName: cached.personaName,
       avatarUrl: cached.avatarUrl,
       profileVisibility: cached.profileVisibility,
     })
@@ -75,6 +76,10 @@ const ensureSgUser = async (
     return ok({
       steamgiftsUsername: profileR.value.steamgiftsUsername,
       steamId: profileR.value.steamId,
+      // SG profile JSON-LD includes the live persona name; the upsert
+      // coalesces it on top of any value already in the DB so the most
+      // recent successful scrape wins.
+      personaName: profileR.value.personaName,
       avatarUrl: profileR.value.avatarUrl,
       profileVisibility: null,
     })
@@ -87,6 +92,7 @@ const ensureSgUser = async (
     return ok({
       steamgiftsUsername: sgUsername,
       steamId: null,
+      personaName: null,
       avatarUrl: null,
       profileVisibility: null,
     })

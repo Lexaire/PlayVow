@@ -141,6 +141,7 @@ export const backfillWinners = async (
     const creatorMeta: ScrapedSgUser = {
       steamgiftsUsername: creator.steamgiftsUsername,
       steamId: creator.steamId,
+      personaName: creator.personaName,
       avatarUrl: creator.avatarUrl,
       profileVisibility: creator.profileVisibility,
     }
@@ -183,6 +184,7 @@ export const backfillWinners = async (
       const winnerMeta: ScrapedSgUser = {
         steamgiftsUsername: winner.steamgiftsUsername,
         steamId: winner.steamId,
+        personaName: winner.personaName,
         avatarUrl: winner.avatarUrl,
         profileVisibility: winner.profileVisibility,
       }

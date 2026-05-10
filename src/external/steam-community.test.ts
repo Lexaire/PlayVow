@@ -7,6 +7,7 @@ import type { Fetcher } from '#/external/http'
 import {
   createSteamCommunityClient,
   parseGroupMembersPage,
+  parseProfileXml,
   parseScreenshots,
 } from '#/external/steam-community'
 
@@ -126,5 +127,74 @@ describe('createSteamCommunityClient', () => {
     expect(seen[0]).toBe(
       'https://steamcommunity.com/gid/103582791400000001/memberslistxml/?xml=1&p=1',
     )
+  })
+
+  it('hits /id/<vanity>/?xml=1 for a vanity lookup', async () => {
+    const seen: string[] = []
+    const fetcher: Fetcher = (url) => {
+      seen.push(url)
+      return Promise.resolve(new Response(fixture('steam/profile-public.xml'), { status: 200 }))
+    }
+    const client = createSteamCommunityClient({ fetcher })
+    const r = await client.getProfileXml({ kind: 'vanity', handle: 'lext' })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.steamId).toBe('76561197968806363')
+    expect(r.value.personaName).toBe('Lex')
+    expect(seen[0]).toBe('https://steamcommunity.com/id/lext/?xml=1')
+  })
+
+  it('hits /profiles/<id>/?xml=1 for a steamid64 lookup', async () => {
+    const seen: string[] = []
+    const fetcher: Fetcher = (url) => {
+      seen.push(url)
+      return Promise.resolve(new Response(fixture('steam/profile-public.xml'), { status: 200 }))
+    }
+    const client = createSteamCommunityClient({ fetcher })
+    const r = await client.getProfileXml({
+      kind: 'steamid64',
+      steamId: '76561197968806363' as SteamId,
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(seen[0]).toBe('https://steamcommunity.com/profiles/76561197968806363/?xml=1')
+  })
+})
+
+describe('parseProfileXml', () => {
+  it('extracts persona name, steamId, custom URL, avatar, and visibility (public)', () => {
+    const r = parseProfileXml(fixture('steam/profile-public.xml'))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.steamId).toBe('76561197968806363')
+    expect(r.value.personaName).toBe('Lex')
+    expect(r.value.customUrl).toBe('lext')
+    expect(r.value.avatarUrl).toBe(
+      'https://avatars.akamai.steamstatic.com/2ff660b2bd1850c391838a8649cf5e02924ca828_full.jpg',
+    )
+    expect(r.value.profileVisibility).toBe(3)
+  })
+
+  it('returns visibility=1 and null customURL for a friends-only profile', () => {
+    const r = parseProfileXml(fixture('steam/profile-private.xml'))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.profileVisibility).toBe(1)
+    expect(r.value.customUrl).toBeNull()
+    expect(r.value.personaName).toBe('PrivatePete')
+  })
+
+  it('returns not_found for the <response><error>… not-found wrapper', () => {
+    const r = parseProfileXml(fixture('steam/profile-not-found.xml'))
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.kind).toBe('not_found')
+  })
+
+  it('returns parse_failed when neither <profile> nor <response><error> is present', () => {
+    const r = parseProfileXml('<html>nope</html>')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.kind).toBe('parse_failed')
   })
 })

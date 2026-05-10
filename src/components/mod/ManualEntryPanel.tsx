@@ -19,12 +19,18 @@ const formatError = (e: AddManualGiveawayError): string => {
       return `Steam API error: ${e.cause.kind}`
     case 'invalid_input':
       return `${capitalize(e.field)} is empty or unrecognized. Use a SteamID64 or vanity URL.`
-    case 'vanity_failed': {
+    case 'profile_lookup_failed': {
       const cause = e.cause
       if (cause.kind === 'not_found') {
-        return `${capitalize(e.field)} vanity not found: ${cause.vanity}`
+        return `${capitalize(e.field)} profile not found on Steam.`
       }
-      return `${capitalize(e.field)} vanity lookup failed: ${cause.kind}`
+      if (cause.kind === 'parse_failed') {
+        return `${capitalize(e.field)} profile returned an unexpected response: ${cause.message}`
+      }
+      if (cause.kind === 'http_status') {
+        return `${capitalize(e.field)} profile lookup failed (HTTP ${String(cause.status)}).`
+      }
+      return `${capitalize(e.field)} profile lookup failed: ${cause.message}`
     }
   }
 }

@@ -14,6 +14,7 @@ export type User = typeof users.$inferSelect
 export type UpsertUserBySgUsernameInput = {
   readonly steamgiftsUsername: SteamGiftsUsername
   readonly steamId?: SteamId | null
+  readonly personaName?: string | null
   readonly avatarUrl?: string | null
   readonly profileVisibility?: ProfileVisibility | null
   readonly lastSyncedAt?: Date | null
@@ -21,6 +22,7 @@ export type UpsertUserBySgUsernameInput = {
 
 export type UpsertUserBySteamIdInput = {
   readonly steamId: SteamId
+  readonly personaName?: string | null
   readonly avatarUrl?: string | null
   readonly profileVisibility?: ProfileVisibility | null
   readonly lastSyncedAt?: Date | null
@@ -70,6 +72,7 @@ export const upsertUserBySgUsername = async (
         .update(users)
         .set({
           steamgiftsUsername: input.steamgiftsUsername,
+          personaName: input.personaName ?? existingBySteam.personaName,
           avatarUrl: input.avatarUrl ?? existingBySteam.avatarUrl,
           profileVisibility: input.profileVisibility ?? existingBySteam.profileVisibility,
           lastSyncedAt: input.lastSyncedAt ?? existingBySteam.lastSyncedAt,
@@ -86,6 +89,7 @@ export const upsertUserBySgUsername = async (
     .values({
       steamgiftsUsername: input.steamgiftsUsername,
       steamId: input.steamId ?? null,
+      personaName: input.personaName ?? null,
       avatarUrl: input.avatarUrl ?? null,
       profileVisibility: input.profileVisibility ?? null,
       lastSyncedAt: input.lastSyncedAt ?? null,
@@ -94,6 +98,7 @@ export const upsertUserBySgUsername = async (
       target: users.steamgiftsUsername,
       set: {
         steamId: sql`coalesce(excluded.steam_id, ${users.steamId})`,
+        personaName: sql`coalesce(excluded.persona_name, ${users.personaName})`,
         avatarUrl: sql`coalesce(excluded.avatar_url, ${users.avatarUrl})`,
         profileVisibility: sql`coalesce(excluded.profile_visibility, ${users.profileVisibility})`,
         lastSyncedAt: sql`coalesce(excluded.last_synced_at, ${users.lastSyncedAt})`,
@@ -122,6 +127,7 @@ export const upsertUserBySteamId = async (
     .values({
       steamgiftsUsername: null,
       steamId: input.steamId,
+      personaName: input.personaName ?? null,
       avatarUrl: input.avatarUrl ?? null,
       profileVisibility: input.profileVisibility ?? null,
       lastSyncedAt: input.lastSyncedAt ?? null,
@@ -129,6 +135,7 @@ export const upsertUserBySteamId = async (
     .onConflictDoUpdate({
       target: users.steamId,
       set: {
+        personaName: sql`coalesce(excluded.persona_name, ${users.personaName})`,
         avatarUrl: sql`coalesce(excluded.avatar_url, ${users.avatarUrl})`,
         profileVisibility: sql`coalesce(excluded.profile_visibility, ${users.profileVisibility})`,
         lastSyncedAt: sql`coalesce(excluded.last_synced_at, ${users.lastSyncedAt})`,

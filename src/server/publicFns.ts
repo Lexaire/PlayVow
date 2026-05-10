@@ -20,12 +20,14 @@ import {
   getGiveawayPageData,
   getGiveawayPageDataById,
   getGroupOverviewPage,
+  getSteamUserPageData,
   getSubPageData,
   getUserPageDataByUsername,
   listGroupSummaries,
   type GamePageData,
   type GiveawayPageData,
   type GroupOverviewPageData,
+  type SteamUserPageData,
   type SubPageData,
   type UserPageData,
 } from '#/server/queries'
@@ -146,6 +148,19 @@ export const fetchUsernameBySteamId = createServerFn({ method: 'GET' })
     const user = await findUserBySteamId(db(), data.steamId as SteamId)
     return user?.steamgiftsUsername ?? null
   })
+
+const steamUserPageCache = createTtlCache<string, SteamUserPageData | null>(PUBLIC_TTL_MS)
+
+// Steam-only profile page data (no SG identity). Used by /u/steam/$steamId
+// when the user has no SG username. Cached briefly the same way the
+// SG-keyed page is cached.
+export const fetchSteamUserPage = createServerFn({ method: 'GET' })
+  .inputValidator((input: { steamId: string }) => SteamIdSchema.parse(input))
+  .handler(async ({ data }): Promise<SteamUserPageData | null> =>
+    steamUserPageCache.get(data.steamId, () =>
+      getSteamUserPageData(db(), data.steamId as SteamId),
+    ),
+  )
 
 const giveawayPageCache = createTtlCache<string, GiveawayPageData | null>(PUBLIC_TTL_MS)
 

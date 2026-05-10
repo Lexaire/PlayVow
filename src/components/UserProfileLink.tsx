@@ -5,6 +5,11 @@ import type { SteamGiftsUsername, SteamId } from '#/db/schema'
 export type LinkableUser = {
   readonly steamgiftsUsername: SteamGiftsUsername | null
   readonly steamId: SteamId | null
+  // Optional. Steam-only users (no SG link) get their persona name from
+  // the Steam Community profile XML; we prefer it over the synthetic
+  // "Steam <last6>" stub when present. Callers without persona data may
+  // omit this field — the chain falls through to the stub.
+  readonly personaName?: string | null
 }
 
 // Renders a "?" stub label when both identifiers are missing — should be
@@ -15,7 +20,7 @@ const fallbackLabel = (steamId: SteamId | null): string =>
   steamId !== null ? `Steam ${steamId.slice(-6)}` : '?'
 
 export function userDisplayName(user: LinkableUser): string {
-  return user.steamgiftsUsername ?? fallbackLabel(user.steamId)
+  return user.steamgiftsUsername ?? user.personaName ?? fallbackLabel(user.steamId)
 }
 
 // Centralized "link to a user profile." SG-username path is the original

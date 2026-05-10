@@ -86,6 +86,7 @@ export type WinUserSummary = {
   readonly id: number
   readonly steamId: SteamId | null
   readonly steamgiftsUsername: SteamGiftsUsername | null
+  readonly personaName: string | null
   readonly avatarUrl: string | null
 }
 
@@ -93,6 +94,7 @@ export type GiveawayCreatorSummary = {
   readonly id: number
   readonly steamgiftsUsername: SteamGiftsUsername | null
   readonly steamId: SteamId | null
+  readonly personaName: string | null
   readonly avatarUrl: string | null
 }
 
@@ -228,6 +230,7 @@ const toWinView = (row: {
     id: row.user.id,
     steamId: row.user.steamId,
     steamgiftsUsername: row.user.steamgiftsUsername,
+    personaName: row.user.personaName,
     avatarUrl: row.user.avatarUrl,
   },
   giveaway: {
@@ -241,6 +244,7 @@ const toWinView = (row: {
       id: row.creator.id,
       steamgiftsUsername: row.creator.steamgiftsUsername,
       steamId: row.creator.steamId,
+      personaName: row.creator.personaName,
       avatarUrl: row.creator.avatarUrl,
     },
   },
@@ -394,6 +398,7 @@ const toGiveawayView = (r: {
     id: r.creator.id,
     steamgiftsUsername: r.creator.steamgiftsUsername,
     steamId: r.creator.steamId,
+    personaName: r.creator.personaName,
     avatarUrl: r.creator.avatarUrl,
   },
 })
@@ -599,6 +604,7 @@ const listNoWinnersGiveawaysByUserId = async (
       id: r.creator.id,
       steamgiftsUsername: r.creator.steamgiftsUsername,
       steamId: r.creator.steamId,
+      personaName: r.creator.personaName,
       avatarUrl: r.creator.avatarUrl,
     },
     group: r.group,
@@ -666,6 +672,7 @@ export const getUserPageDataByUsername = async (
       id: users.id,
       steamId: users.steamId,
       steamgiftsUsername: users.steamgiftsUsername,
+      personaName: users.personaName,
       avatarUrl: users.avatarUrl,
     })
     .from(users)
@@ -775,6 +782,7 @@ export const getUserPageDataByUsername = async (
     id: userRow.id,
     steamId: userRow.steamId,
     steamgiftsUsername: userRow.steamgiftsUsername,
+    personaName: userRow.personaName,
     avatarUrl: userRow.avatarUrl,
   }
 
@@ -798,6 +806,66 @@ export const getUserPageDataByUsername = async (
     winsOnCreatedByStatus,
     noWinnersGiveaways,
     creatorStats,
+    groupMemberships,
+    commonByWinId: Array.from(commonByWinIdMap),
+  }
+}
+
+// Minimal user page for Steam-only accounts. These users came in via the
+// manual-giveaway flow (or the admin "Sync Steam user" tool) and have no
+// SG identity, so the rich /u/$username page's tabs (created giveaways,
+// no-winners, creator stats) don't apply — they can only have *won* manual
+// giveaways. We render a flat wins list ordered by wonAt.
+export type SteamUserPageData = {
+  readonly user: WinUserSummary
+  readonly wins: ReadonlyArray<WinView>
+  readonly groupMemberships: ReadonlyArray<{
+    readonly groupSlug: string
+    readonly groupName: string
+  }>
+  readonly commonByWinId: CommonByWinId
+}
+
+export const getSteamUserPageData = async (
+  db: DbOrTx,
+  steamId: SteamId,
+): Promise<SteamUserPageData | null> => {
+  const [userRow] = await db
+    .select({
+      id: users.id,
+      steamId: users.steamId,
+      steamgiftsUsername: users.steamgiftsUsername,
+      personaName: users.personaName,
+      avatarUrl: users.avatarUrl,
+    })
+    .from(users)
+    .where(eq(users.steamId, steamId))
+    .limit(1)
+
+  if (!userRow) return null
+
+  const winRows = await selectWinJoin(db)
+    .where(and(eq(wins.userId, userRow.id), giveawayNotDeleted()))
+    .orderBy(desc(wins.wonAt))
+  const winViews = winRows.map(toWinView)
+
+  const [groupMemberships, commonByWinIdMap] = await Promise.all([
+    userRow.steamId ? findUserGroupsWithOpenMembership(db, userRow.steamId) : Promise.resolve([]),
+    getCommonAchievementProgressBatch(db, {
+      winIds: winViews.map((w) => w.id),
+      threshold: COMMON_ACHIEVEMENT_THRESHOLD,
+    }),
+  ])
+
+  return {
+    user: {
+      id: userRow.id,
+      steamId: userRow.steamId,
+      steamgiftsUsername: userRow.steamgiftsUsername,
+      personaName: userRow.personaName,
+      avatarUrl: userRow.avatarUrl,
+    },
+    wins: winViews,
     groupMemberships,
     commonByWinId: Array.from(commonByWinIdMap),
   }
@@ -1029,6 +1097,7 @@ const getGiveawayPageDataByPredicate = async (
         id: row.creator.id,
         steamgiftsUsername: row.creator.steamgiftsUsername,
         steamId: row.creator.steamId,
+        personaName: row.creator.personaName,
         avatarUrl: row.creator.avatarUrl,
       },
     },
@@ -1133,6 +1202,7 @@ const listGiveawaysForGiveawayWhere = async (
         id: r.creator.id,
         steamgiftsUsername: r.creator.steamgiftsUsername,
         steamId: r.creator.steamId,
+        personaName: r.creator.personaName,
         avatarUrl: r.creator.avatarUrl,
       },
       group: r.group,

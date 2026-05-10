@@ -233,8 +233,11 @@ const GameCapsule = ({ target }: { readonly target: GiveawayTargetView }) => {
 export const UserLink = ({ user }: { readonly user: WinUserSummary }) => {
   // Manual-giveaway winners (resolved by SteamID) and Steam-only mods may
   // not have an SG username. The SG profile icon is suppressed in that
-  // case; the in-app link falls back to /u/steam/$steamId.
-  const displayName = user.steamgiftsUsername ?? `Steam ${user.steamId?.slice(-6) ?? '?'}`
+  // case; the in-app link falls back to /u/steam/$steamId. Persona name is
+  // a step better than the synthesized "Steam <last6>" but worse than an SG
+  // username, so it sits in the middle of the fallback chain.
+  const displayName =
+    user.steamgiftsUsername ?? user.personaName ?? `Steam ${user.steamId?.slice(-6) ?? '?'}`
   return (
     <span className="inline-flex items-center gap-1.5">
       {user.steamgiftsUsername !== null ? (

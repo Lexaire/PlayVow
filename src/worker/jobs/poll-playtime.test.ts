@@ -187,6 +187,9 @@ const stubSteamCommunity = (
     const key = `${steamId}:${String(appId)}`
     return Promise.resolve(screenshotsBy[key] ?? ok([]))
   },
+  getProfileXml: () => {
+    throw new Error('getProfileXml not used in this test')
+  },
   getGroupMembersPage: () => {
     throw new Error('getGroupMembersPage not used in this test')
   },
@@ -782,6 +785,9 @@ describe('pollPlaytime', () => {
       getGroupMembersPage: () => {
         throw new Error('getGroupMembersPage not used in this test')
       },
+      getProfileXml: () => {
+        throw new Error('getProfileXml not used in this test')
+      },
     }
 
     const summary = await pollPlaytime({
@@ -852,6 +858,9 @@ describe('pollPlaytime', () => {
       getGroupMembersPage: () => {
         throw new Error('getGroupMembersPage not used in this test')
       },
+      getProfileXml: () => {
+        throw new Error('getProfileXml not used in this test')
+      },
     }
 
     const summary = await pollPlaytime({
@@ -911,6 +920,9 @@ describe('pollPlaytime', () => {
       },
       getGroupMembersPage: () => {
         throw new Error('getGroupMembersPage not used in this test')
+      },
+      getProfileXml: () => {
+        throw new Error('getProfileXml not used in this test')
       },
     }
     return { steam, steamCommunity, achievementCalls, screenshotCalls }

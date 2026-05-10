@@ -135,6 +135,12 @@ export const users = sqliteTable(
     steamgiftsUsername: text('steamgifts_username').$type<SteamGiftsUsername>().unique(),
     steamId: text('steam_id').$type<SteamId>().unique(),
     role: text('role', { enum: USER_ROLES }).notNull().default('user'),
+    // Steam Community persona name (the live display name shown next to the
+    // avatar). Source: Steam Community profile XML on Steam-keyed flows; the
+    // SG profile JSON-LD on SG-keyed flows. Nullable — old rows from before
+    // we started capturing it, plus stub rows for SG accounts that vanished
+    // before any successful fetch.
+    personaName: text('persona_name'),
     avatarUrl: text('avatar_url'),
     profileVisibility: integer('profile_visibility').$type<ProfileVisibility>(),
     lastSyncedAt: timestamp('last_synced_at'),

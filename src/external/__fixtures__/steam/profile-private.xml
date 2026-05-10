@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<profile>
+	<steamID64>76561198000000099</steamID64>
+	<steamID><![CDATA[PrivatePete]]></steamID>
+	<onlineState>offline</onlineState>
+	<stateMessage><![CDATA[Last Online 3 days ago]]></stateMessage>
+	<privacyState>friendsonly</privacyState>
+	<visibilityState>1</visibilityState>
+	<avatarIcon><![CDATA[https://avatars.akamai.steamstatic.com/abc.jpg]]></avatarIcon>
+	<avatarMedium><![CDATA[https://avatars.akamai.steamstatic.com/abc_medium.jpg]]></avatarMedium>
+	<avatarFull><![CDATA[https://avatars.akamai.steamstatic.com/abc_full.jpg]]></avatarFull>
+	<vacBanned>0</vacBanned>
+	<tradeBanState>None</tradeBanState>
+	<isLimitedAccount>0</isLimitedAccount>
+	<customURL></customURL>
+</profile>

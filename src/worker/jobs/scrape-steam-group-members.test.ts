@@ -33,6 +33,9 @@ const stubSteam = (pages: ReadonlyArray<ReadonlyArray<SteamId>>): SteamCommunity
   getScreenshots: () => {
     throw new Error('unexpected getScreenshots')
   },
+  getProfileXml: () => {
+    throw new Error('unexpected getProfileXml')
+  },
   getGroupMembersPage: (_gid64, page) => {
     const idx = page - 1
     if (idx >= pages.length) {
@@ -113,6 +116,9 @@ describe('scrapeSteamGroupMembers', () => {
     const steam: SteamCommunityClient = {
       getScreenshots: () => {
         throw new Error('unexpected')
+      },
+      getProfileXml: () => {
+        throw new Error('unexpected getProfileXml')
       },
       getGroupMembersPage: () =>
         Promise.resolve({

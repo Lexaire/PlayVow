@@ -3,10 +3,13 @@ import { z } from 'zod'
 
 import { env } from '#/config/env'
 import { db, dbWrite, withTransaction } from '#/db/client'
-import type { SteamAppId, SteamId, SteamSubId } from '#/db/schema'
+import type { ProfileVisibility, SteamAppId, SteamId, SteamSubId } from '#/db/schema'
+import { parseSteamInput } from '#/domain/steamInput'
 import { computePlayDeadline } from '#/domain/wins'
-import type { ResolveVanityError, SteamApiError } from '#/external/steam-api'
-import { createSteamApiClient, extractVanityHandle } from '#/external/steam-api'
+import type { SteamApiError } from '#/external/steam-api'
+import { createSteamApiClient } from '#/external/steam-api'
+import type { ProfileXmlError } from '#/external/steam-community'
+import { createSteamCommunityClient } from '#/external/steam-community'
 import { writeAuditEvent } from '#/repos/auditLog'
 import type { Giveaway } from '#/repos/giveaways'
 import {
@@ -25,11 +28,12 @@ import type { Result } from '#/lib/result'
 import { err, ok } from '#/lib/result'
 import { requireAdmin, requireGroupModerator } from '#/server/auth'
 
-// Server-side Steam client — built lazily because admin/mod actions are rare
-// compared to worker-driven calls. No rate limiting wrapper: each manual
-// action makes at most two Steam calls (store item + vanity), which is far
-// below any per-key throttle.
+// Server-side Steam clients — built lazily because admin/mod actions are
+// rare compared to worker-driven calls. No rate limiting wrapper: each
+// manual action makes at most a handful of Steam calls (store item + one
+// profile XML per user), well below any per-key throttle.
 let steamClient: ReturnType<typeof createSteamApiClient> | undefined
+let steamCommunityClient: ReturnType<typeof createSteamCommunityClient> | undefined
 
 const getSteamClient = (): ReturnType<typeof createSteamApiClient> => {
   if (!steamClient) {
@@ -38,11 +42,12 @@ const getSteamClient = (): ReturnType<typeof createSteamApiClient> => {
   return steamClient
 }
 
-// 17-digit SteamID64s start with 7656 (the upper bits of the SteamID
-// "individual" account type). Steam community profiles URLs use the same
-// number under /profiles/. Anything else is treated as a vanity.
-const STEAM_ID_PATTERN = /^7656\d{13}$/
-const PROFILES_URL_PATTERN = /steamcommunity\.com\/profiles\/(7656\d{13})/i
+const getSteamCommunityClient = (): ReturnType<typeof createSteamCommunityClient> => {
+  if (!steamCommunityClient) {
+    steamCommunityClient = createSteamCommunityClient()
+  }
+  return steamCommunityClient
+}
 
 const ItemSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('app'), id: z.number().int().nonnegative() }),
@@ -73,7 +78,11 @@ const AddGiveawaySchema = z.object({
 // form can render the message next to the offending input instead of a
 // generic top-line error.
 export type SteamUserResolveError =
-  | { readonly kind: 'vanity_failed'; readonly field: 'creator' | 'winner'; readonly cause: ResolveVanityError }
+  | {
+      readonly kind: 'profile_lookup_failed'
+      readonly field: 'creator' | 'winner'
+      readonly cause: ProfileXmlError
+    }
   | { readonly kind: 'invalid_input'; readonly field: 'creator' | 'winner' }
 
 export type ItemResolveError =
@@ -93,19 +102,32 @@ export type AddManualGiveawayResult = {
   readonly win: Win
 }
 
+// Resolved Steam profile ready for upsertUserBySteamId. We use the
+// /profiles/<id>?xml=1 (or /id/<vanity>?xml=1) endpoint for both ID and
+// vanity inputs because it returns SteamID + persona name + avatar +
+// visibility in one shot — so a mod entering "lext" gets all four fields
+// recorded against the upserted user, no second call needed.
+type ResolvedSteamUser = {
+  readonly steamId: SteamId
+  readonly personaName: string
+  readonly avatarUrl: string | null
+  readonly profileVisibility: ProfileVisibility
+}
+
 const resolveSteamIdFromInput = async (
   input: string,
   field: 'creator' | 'winner',
-): Promise<Result<SteamId, SteamUserResolveError>> => {
-  const trimmed = input.trim()
-  if (trimmed.length === 0) return err({ kind: 'invalid_input', field })
-  if (STEAM_ID_PATTERN.test(trimmed)) return ok(trimmed as SteamId)
-  const profilesMatch = PROFILES_URL_PATTERN.exec(trimmed)
-  if (profilesMatch?.[1]) return ok(profilesMatch[1] as SteamId)
-  if (extractVanityHandle(trimmed) === null) return err({ kind: 'invalid_input', field })
-  const r = await getSteamClient().resolveVanityUrl(trimmed)
-  if (!r.ok) return err({ kind: 'vanity_failed', field, cause: r.error })
-  return ok(r.value)
+): Promise<Result<ResolvedSteamUser, SteamUserResolveError>> => {
+  const parsed = parseSteamInput(input)
+  if (!parsed.ok) return err({ kind: 'invalid_input', field })
+  const r = await getSteamCommunityClient().getProfileXml(parsed.value)
+  if (!r.ok) return err({ kind: 'profile_lookup_failed', field, cause: r.error })
+  return ok({
+    steamId: r.value.steamId,
+    personaName: r.value.personaName,
+    avatarUrl: r.value.avatarUrl,
+    profileVisibility: r.value.profileVisibility,
+  })
 }
 
 type ResolvedItem =
@@ -167,11 +189,11 @@ export const addManualGiveawayFn = createServerFn({ method: 'POST' })
     // flow is rare enough that parallelizing isn't worth the code.
     const creatorR = await resolveSteamIdFromInput(data.creator, 'creator')
     if (!creatorR.ok) return err(creatorR.error)
-    const creatorSteamId = creatorR.value
+    const creatorProfile = creatorR.value
 
     const winnerR = await resolveSteamIdFromInput(data.winner, 'winner')
     if (!winnerR.ok) return err(winnerR.error)
-    const winnerSteamId = winnerR.value
+    const winnerProfile = winnerR.value
 
     const now = new Date()
     const startedAt = data.startedAt ?? now
@@ -193,9 +215,14 @@ export const addManualGiveawayFn = createServerFn({ method: 'POST' })
 
       // Creator is the actual gift-giver the mod entered, not the mod
       // themselves. The mod's identity for "who did this admin action" lives
-      // on the audit row's actorUserId below.
+      // on the audit row's actorUserId below. Persona/avatar/visibility came
+      // back free with the resolution call so we record them here — saves the
+      // periodic poll the work of filling them in later.
       const creatorUser = await upsertUserBySteamId(tx, {
-        steamId: creatorSteamId,
+        steamId: creatorProfile.steamId,
+        personaName: creatorProfile.personaName,
+        avatarUrl: creatorProfile.avatarUrl,
+        profileVisibility: creatorProfile.profileVisibility,
         lastSyncedAt: now,
       })
 
@@ -228,7 +255,10 @@ export const addManualGiveawayFn = createServerFn({ method: 'POST' })
       })
 
       const winnerUser = await upsertUserBySteamId(tx, {
-        steamId: winnerSteamId,
+        steamId: winnerProfile.steamId,
+        personaName: winnerProfile.personaName,
+        avatarUrl: winnerProfile.avatarUrl,
+        profileVisibility: winnerProfile.profileVisibility,
         lastSyncedAt: now,
       })
       // Fresh giveaway just inserted, so insertWinIfAbsent can't collide.

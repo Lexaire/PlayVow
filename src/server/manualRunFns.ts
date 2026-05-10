@@ -2,7 +2,10 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 
 import { db, dbWrite } from '#/db/client'
-import type { SteamAppId } from '#/db/schema'
+import type { SteamAppId, SteamId } from '#/db/schema'
+import { parseSteamInput } from '#/domain/steamInput'
+import type { ProfileXmlError } from '#/external/steam-community'
+import { createSteamCommunityClient } from '#/external/steam-community'
 import type { SgCookieTestOutcome } from '#/external/steamgifts-cookie-test'
 import { testSgCookie } from '#/external/steamgifts-cookie-test'
 import { env } from '#/config/env'
@@ -15,6 +18,7 @@ import { getDecryptedCookie, recordTestResult } from '#/repos/groupSecrets'
 import { findGroupById } from '#/repos/groups'
 import { hasUnfinishedJobRun } from '#/repos/jobRuns'
 import { enqueueJobTrigger, hasPendingJobTrigger } from '#/repos/jobTriggers'
+import { findUserBySteamId, upsertUserBySteamId } from '#/repos/users'
 import { findWinById } from '#/repos/wins'
 import { requireAdmin } from '#/server/auth'
 import { buildJobDeps } from '#/worker/build-deps'
@@ -373,6 +377,73 @@ export const runScrapeSteamMembersFn = createServerFn({ method: 'POST' })
       requestedByUserId: admin.id,
     })
     return ok({ queued: true })
+  })
+
+// ----- Sync one Steam user (synchronous) --------------------------------
+
+// Lazy Steam Community client for the sync-user manual action. No rate
+// limiting wrapper: each click makes one HTTP call to steamcommunity.com.
+let syncSteamCommunityClient: ReturnType<typeof createSteamCommunityClient> | undefined
+
+const getSyncSteamCommunityClient = (): ReturnType<typeof createSteamCommunityClient> => {
+  if (!syncSteamCommunityClient) {
+    syncSteamCommunityClient = createSteamCommunityClient()
+  }
+  return syncSteamCommunityClient
+}
+
+export type SyncManualSteamUserInput = { readonly input: string }
+export type SyncManualSteamUserOk = {
+  readonly steamId: SteamId
+  readonly userId: number
+  readonly personaName: string
+  readonly profileVisibility: 1 | 3
+  readonly wasInsert: boolean
+}
+export type SyncManualSteamUserError =
+  | { readonly kind: 'invalid_input' }
+  | { readonly kind: 'profile_lookup_failed'; readonly cause: ProfileXmlError }
+
+const SyncManualSteamUserSchema = z.object({ input: z.string().min(1).max(200) })
+
+// Admin-only. Resolves a SteamID64 / vanity URL / vanity handle via the
+// Steam Community profile XML endpoint and upserts the user with persona
+// name, avatar, and visibility populated. Used to seed users into the DB
+// before they appear in any giveaway — e.g. so a manual mod-grant in
+// /admin/users can find them by SteamID.
+export const syncManualSteamUserFn = createServerFn({ method: 'POST' })
+  .inputValidator((input: SyncManualSteamUserInput) => SyncManualSteamUserSchema.parse(input))
+  .handler(async ({ data }): Promise<Result<SyncManualSteamUserOk, SyncManualSteamUserError>> => {
+    await requireAdmin()
+    const parsed = parseSteamInput(data.input)
+    if (!parsed.ok) return err({ kind: 'invalid_input' })
+
+    const profileR = await getSyncSteamCommunityClient().getProfileXml(parsed.value)
+    if (!profileR.ok) return err({ kind: 'profile_lookup_failed', cause: profileR.error })
+    const profile = profileR.value
+
+    // Pre-check by steamId so the toast can report insert vs. update without
+    // racing against the upsert's RETURNING. The window between this read
+    // and the write is tolerable for an admin-triggered single-user action.
+    const existing = await findUserBySteamId(dbWrite(), profile.steamId)
+    const wasInsert = existing === null
+
+    const now = new Date()
+    const row = await upsertUserBySteamId(dbWrite(), {
+      steamId: profile.steamId,
+      personaName: profile.personaName,
+      avatarUrl: profile.avatarUrl,
+      profileVisibility: profile.profileVisibility,
+      lastSyncedAt: now,
+    })
+
+    return ok({
+      steamId: profile.steamId,
+      userId: row.id,
+      personaName: profile.personaName,
+      profileVisibility: profile.profileVisibility,
+      wasInsert,
+    })
   })
 
 // ----- Refresh app achievement community percentages ---------------------

@@ -1,6 +1,6 @@
 import * as cheerio from 'cheerio'
 
-import type { SteamAppId, SteamGroupId, SteamId } from '#/db/schema'
+import type { ProfileVisibility, SteamAppId, SteamGroupId, SteamId } from '#/db/schema'
 import type { Fetcher, HttpError } from '#/external/http'
 import { fetchText } from '#/external/http'
 import type { Result } from '#/lib/result'
@@ -39,6 +39,30 @@ export type GroupMembersPage = {
 
 export type GroupMembersError =
   | HttpError
+  | { readonly kind: 'parse_failed'; readonly message: string }
+
+// One trip to /id/<vanity>/?xml=1 or /profiles/<id>/?xml=1 returns everything
+// we want for a Steam user: SteamID64, persona name (the live display name),
+// avatar, vanity slug, and visibility — no Web API key required and vanity
+// resolution is "free" (the same response carries the resolved id). This
+// replaces the SteamApi `resolveVanityUrl` + a hypothetical GetPlayerSummaries
+// pair on the manual-sync and manual-giveaway entry paths.
+export type SteamProfileXml = {
+  readonly steamId: SteamId
+  readonly personaName: string
+  readonly customUrl: string | null
+  readonly avatarUrl: string | null
+  readonly profileVisibility: ProfileVisibility
+}
+
+// `not_found` covers the two ways Steam tells us nothing's there: the XML
+// document is missing entirely (vanity that doesn't resolve) and the
+// "<response><error>The specified profile could not be found.</error>" wrapper
+// that Steam returns with HTTP 200 when /profiles/<bogus>?xml=1 is hit. Both
+// are permanent — caller should not retry.
+export type ProfileXmlError =
+  | HttpError
+  | { readonly kind: 'not_found' }
   | { readonly kind: 'parse_failed'; readonly message: string }
 
 export const parseScreenshots = (
@@ -87,6 +111,45 @@ export const parseGroupMembersPage = (xml: string): Result<GroupMembersPage, Gro
   return ok({ groupId64, totalPages, currentPage, members })
 }
 
+// Steam's <visibilityState> values: 1 = private (also covers friends-only and
+// friends-of-friends from this endpoint's perspective — the XML collapses
+// non-public into "1"), 3 = public. Anything else is unexpected and we treat
+// it as private to be safe (errs on the side of "we can't see their library").
+const toProfileVisibility = (raw: string): ProfileVisibility => (raw === '3' ? 3 : 1)
+
+export const parseProfileXml = (xml: string): Result<SteamProfileXml, ProfileXmlError> => {
+  const $ = cheerio.load(xml, { xmlMode: true })
+  // Steam's "no such profile" XML is `<response><error>...</error></response>`
+  // with HTTP 200; the success shape is `<profile>...</profile>`. Distinguish
+  // before reaching for fields.
+  if ($('profile').length === 0) {
+    if ($('response > error').length > 0) return err({ kind: 'not_found' })
+    return err({ kind: 'parse_failed', message: 'no <profile> root' })
+  }
+  const steamId = $('profile > steamID64').first().text().trim()
+  if (!steamId) return err({ kind: 'parse_failed', message: 'missing steamID64' })
+  const personaName = $('profile > steamID').first().text().trim()
+  if (!personaName) return err({ kind: 'parse_failed', message: 'missing persona name' })
+  const visibilityRaw = $('profile > visibilityState').first().text().trim()
+  if (!visibilityRaw) return err({ kind: 'parse_failed', message: 'missing visibilityState' })
+  const customUrl = $('profile > customURL').first().text().trim()
+  const avatarUrl = $('profile > avatarFull').first().text().trim()
+  return ok({
+    steamId: steamId as SteamId,
+    personaName,
+    customUrl: customUrl.length > 0 ? customUrl : null,
+    avatarUrl: avatarUrl.length > 0 ? avatarUrl : null,
+    profileVisibility: toProfileVisibility(visibilityRaw),
+  })
+}
+
+// Tagged input for the profile XML endpoint. Two URL shapes (/id/<vanity>
+// vs. /profiles/<id64>) live behind the same Steam Community page; the parser
+// is identical, so the caller picks the URL form via this discriminator.
+export type ProfileXmlLookup =
+  | { readonly kind: 'steamid64'; readonly steamId: SteamId }
+  | { readonly kind: 'vanity'; readonly handle: string }
+
 export type SteamCommunityClient = {
   readonly getScreenshots: (
     steamId: SteamId,
@@ -96,6 +159,9 @@ export type SteamCommunityClient = {
     gid64: SteamGroupId,
     page: number,
   ) => Promise<Result<GroupMembersPage, GroupMembersError>>
+  readonly getProfileXml: (
+    lookup: ProfileXmlLookup,
+  ) => Promise<Result<SteamProfileXml, ProfileXmlError>>
 }
 
 export type SteamCommunityClientConfig = {
@@ -122,6 +188,16 @@ export const createSteamCommunityClient = (
       const text = await fetchText(fetcher, url)
       if (!text.ok) return text
       return parseGroupMembersPage(text.value)
+    },
+    getProfileXml: async (lookup) => {
+      const path =
+        lookup.kind === 'steamid64'
+          ? `/profiles/${encodeURIComponent(lookup.steamId)}`
+          : `/id/${encodeURIComponent(lookup.handle)}`
+      const url = `${STEAM_COMMUNITY_BASE}${path}/?xml=1`
+      const text = await fetchText(fetcher, url)
+      if (!text.ok) return text
+      return parseProfileXml(text.value)
     },
   }
 }
