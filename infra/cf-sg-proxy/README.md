@@ -18,7 +18,12 @@ from a Worker doesn't get the same treatment, so we hop through one.
 4. **Settings → Variables and Secrets → Add → Type: Secret**:
    - Name: `PROXY_SHARED_SECRET`
    - Value: any random string (`openssl rand -base64 32`)
-5. Note the worker URL (top of dashboard) — looks like
+5. **Bindings → Add → Rate Limiting** (top nav tab, not under Settings):
+   - Variable name: `PROXY_RATE_LIMIT` (must match `worker.js` exactly)
+   - Namespace ID: `1001` (any small int unique to this worker)
+   - Limit: `30`, Period: `60` seconds
+   - Save, then re-deploy the worker so the binding takes effect.
+6. Note the worker URL (top of dashboard) — looks like
    `https://playvow-sg-proxy.<your-subdomain>.workers.dev`.
 
 ## Wire into PlayVow

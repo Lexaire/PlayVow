@@ -21,6 +21,21 @@ export default {
     if (!expected) {
       return new Response('worker missing PROXY_SHARED_SECRET', { status: 500 })
     }
+
+    // Per-IP rate limit (binding set in dashboard: 30 req / 60s). Runs before
+    // the auth check so a brute-forcer trying random secrets gets capped at
+    // 30 attempts/minute per IP instead of burning Worker CPU on string
+    // comparisons. PlayVow itself does ~30 req/day so the legit caller never
+    // touches the ceiling. Binding is optional — falls through if absent so
+    // local replays / new deploys without the binding still work.
+    if (env.PROXY_RATE_LIMIT) {
+      const clientIp = request.headers.get('cf-connecting-ip') ?? 'unknown'
+      const { success } = await env.PROXY_RATE_LIMIT.limit({ key: clientIp })
+      if (!success) {
+        return new Response('rate limited', { status: 429 })
+      }
+    }
+
     if (request.headers.get('X-Proxy-Auth') !== expected) {
       return new Response('forbidden', { status: 403 })
     }
