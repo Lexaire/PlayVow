@@ -1,0 +1,20 @@
+[Unit]
+Description=PlayVow per-IP connection rate limits (nftables)
+# Run before any network-facing service so the limits exist when traffic
+# starts arriving. After=network-pre.target so this fires during early boot.
+DefaultDependencies=no
+After=network-pre.target
+Before=network.target caddy.service playvow-web.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Flush any pre-existing copy of our table (idempotent reload) and apply.
+# `nft delete table` errors if the table doesn't exist yet, so swallow that.
+ExecStart=/usr/bin/sh -c '/usr/sbin/nft delete table inet playvow_ratelimit 2>/dev/null || true'
+ExecStart=/usr/sbin/nft -f /etc/nftables.d/playvow-ratelimit.nft
+ExecStop=/usr/sbin/nft delete table inet playvow_ratelimit
+
+[Install]
+WantedBy=multi-user.target

@@ -59,12 +59,22 @@
         group: root
         mode: '0755'
 
-    - name: Wire env file into Caddy unit
+    - name: Wire env file and memory caps into Caddy unit
       ansible.builtin.copy:
         dest: /etc/systemd/system/caddy.service.d/override.conf
+        # Memory caps for 1GB-VPS budget: Caddy is Go and modest, 100M is
+        # plenty for TLS termination + reverse proxy at this scale.
+        # OOMPolicy=stop turns an OOM kill into a clean exit so the existing
+        # Restart= in the upstream caddy.service kicks in cleanly.
         content: |
           [Service]
           EnvironmentFile=/etc/caddy/Caddyfile.env
+          MemoryHigh=80M
+          MemoryMax=100M
+          TasksMax=512
+          LimitNOFILE=65535
+          OOMScoreAdjust=200
+          OOMPolicy=stop
         owner: root
         group: root
         mode: '0644'

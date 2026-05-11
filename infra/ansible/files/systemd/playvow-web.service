@@ -22,6 +22,19 @@ ExecStart=/opt/playvow/current/.output/node /opt/playvow/current/.output/server/
 Restart=on-failure
 RestartSec=2
 
+# Memory caps for a 1GB VPS. MemoryHigh is the soft throttle (cgroup starts
+# reclaiming pages aggressively); MemoryMax is the hard ceiling — the kernel
+# kills the process if it crosses this. OOMPolicy=stop turns that kill into a
+# clean unit-stop so Restart=on-failure kicks in (instead of leaving a half-
+# dead service). OOMScoreAdjust biases the system OOM killer toward Node and
+# away from sshd/caddy if the box as a whole runs out of memory.
+MemoryHigh=400M
+MemoryMax=512M
+TasksMax=512
+LimitNOFILE=65535
+OOMScoreAdjust=500
+OOMPolicy=stop
+
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

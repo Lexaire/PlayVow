@@ -1,0 +1,46 @@
+# Per-IP connection limits for the web stack. UFW manages the inet/filter
+# table on this host; we install our limits as a separate inet/ratelimit
+# table so the two don't collide. Loaded at boot by playvow-nft-ratelimit.
+# service and applied immediately at deploy time via `nft -f`.
+#
+# What it does:
+#   - Caps concurrent TCP connections per source IP on 80/443 at 50.
+#   - Rate-limits new connections (SYNs) per IP to 25/second with a burst,
+#     stopping connection floods before any process sees them.
+#
+# Tuning notes:
+#   - Real browsers open ~6 connections per origin, so 50 is generous even
+#     for users behind shared NATs.
+#   - The kernel handles all this — zero userland CPU cost.
+#   - To disable temporarily without removing the file:
+#       sudo nft delete table inet playvow_ratelimit
+
+table inet playvow_ratelimit {
+    chain input {
+        type filter hook input priority -100; policy accept;
+
+        # Rate-limit new TCP connections (SYNs) per source IP.
+        # `meter ... { ip saddr limit rate over X burst Y }` matches when an
+        # IP exceeds the rate; the trailing `drop` then drops the excess.
+        # Without `over`, the meter would match under-rate traffic and the
+        # action would fire on the wrong side — easy mistake.
+        tcp dport { 80, 443 } ct state new \
+            meter pl_rate_v4 { ip saddr limit rate over 25/second burst 50 packets } \
+            drop
+
+        tcp dport { 80, 443 } ct state new \
+            meter pl_rate_v6 { ip6 saddr limit rate over 25/second burst 50 packets } \
+            drop
+
+        # Cap concurrent connections per source IP. `ct count over N` matched
+        # inside a per-saddr meter gives us "any single IP with more than 50
+        # established+pending connections to 80/443 → drop the new ones."
+        tcp dport { 80, 443 } ct state new \
+            meter pl_conn_v4 { ip saddr ct count over 50 } \
+            drop
+
+        tcp dport { 80, 443 } ct state new \
+            meter pl_conn_v6 { ip6 saddr ct count over 50 } \
+            drop
+    }
+}

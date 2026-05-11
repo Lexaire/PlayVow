@@ -75,3 +75,55 @@
         - upower.service
         - postfix.service
       failed_when: false
+
+    # Per-IP connection limits for 80/443. UFW handles allow/deny on its own
+    # inet/filter table; this lives in inet/playvow_ratelimit so the two
+    # don't fight. Sits at hook priority -100 (before UFW) so floods are
+    # dropped before they hit any userland process.
+    - name: Ensure nftables is installed
+      ansible.builtin.apt:
+        name: nftables
+        state: present
+
+    - name: Ensure /etc/nftables.d exists
+      ansible.builtin.file:
+        path: /etc/nftables.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Drop nftables rate-limit rules in place
+      ansible.builtin.copy:
+        src: ../files/nftables/playvow-ratelimit.nft
+        dest: /etc/nftables.d/playvow-ratelimit.nft
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reload playvow nftables ratelimit
+
+    - name: Install playvow-nft-ratelimit systemd unit
+      ansible.builtin.copy:
+        src: ../files/systemd/playvow-nft-ratelimit.service
+        dest: /etc/systemd/system/playvow-nft-ratelimit.service
+        owner: root
+        group: root
+        mode: '0644'
+      register: nft_unit
+
+    - name: Reload systemd if nft unit changed
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: nft_unit.changed
+
+    - name: Enable and start playvow-nft-ratelimit
+      ansible.builtin.systemd:
+        name: playvow-nft-ratelimit.service
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Reload playvow nftables ratelimit
+      ansible.builtin.systemd:
+        name: playvow-nft-ratelimit.service
+        state: restarted

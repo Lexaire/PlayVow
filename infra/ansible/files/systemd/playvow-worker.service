@@ -16,6 +16,17 @@ ExecStart=/opt/playvow/current/.output/node /opt/playvow/current/.output/server/
 Restart=on-failure
 RestartSec=5
 
+# Memory caps for a 1GB VPS. Worker is smaller than web (no SSR, just cron
+# jobs), so a tighter cap is fine. Higher OOMScoreAdjust than web means if
+# the system runs out of memory the kernel picks the worker first — losing a
+# scrape cycle is cheaper than losing the user-facing site.
+MemoryHigh=150M
+MemoryMax=192M
+TasksMax=256
+LimitNOFILE=4096
+OOMScoreAdjust=700
+OOMPolicy=stop
+
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
