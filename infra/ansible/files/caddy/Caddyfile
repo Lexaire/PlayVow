@@ -1,3 +1,18 @@
+# Global cache configuration for the cache-handler module. The `order`
+# directive places cache evaluation before reverse_proxy so cached responses
+# short-circuit the upstream. Default TTL is short — anonymous HTML
+# doesn't need to be fresh-fresh, but staleness > 2min would be confusing
+# after a user action triggers an SG scrape. `stale` lets a stale entry be
+# served for the configured window while the cache is being refilled in
+# the background (avoids latency spikes when an entry expires).
+{
+    order cache before reverse_proxy
+    cache {
+        ttl 60s
+        stale 30s
+    }
+}
+
 {$APP_DOMAIN} {
     encode zstd gzip
 
@@ -20,6 +35,23 @@
         reverse_proxy https://us.i.posthog.com {
             header_up Host us.i.posthog.com
         }
+    }
+
+    # Cache anonymous GETs to public read-only pages. Scoped tightly so that
+    # auth flows, admin/mod pages, and server-function POSTs never get
+    # cached. The `not header_regexp` check skips the cache for any request
+    # carrying the pv-session cookie — logged-in users always hit Node so
+    # they see their own nav/state. Set-Cookie responses are excluded by
+    # cache-handler's defaults, so the Steam OpenID callback's session-set
+    # is safe even if it slipped through the path matcher.
+    @cacheable_anon {
+        method GET
+        path / /g/* /u/* /app/* /sub/* /groups
+        not header_regexp Cookie pv-session=
+    }
+    handle @cacheable_anon {
+        cache
+        reverse_proxy 127.0.0.1:3000
     }
 
     handle {

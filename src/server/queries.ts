@@ -426,13 +426,31 @@ export const getGroupOverviewPage = async (
   const groupRow = await findGroupBySlug(db, slug)
   if (!groupRow) return null
 
-  // Four concurrent queries: in-progress giveaways (paginated, hydrated) and
-  // their count, feed keys for wins, feed keys for no-winner giveaways. The
-  // feed is paginated in JS after merging keys — payload is bounded (a few
-  // thousand IDs + timestamps for a busy group), and the result is wrapped in
-  // a TTL cache upstream.
+  // Six concurrent queries: in-progress giveaways + count, top-N feed keys
+  // for each side (wins, no-winner giveaways) bounded to `feedPage *
+  // FEED_PAGE_SIZE`, plus a COUNT per side for pagination total. Old code
+  // pulled ALL keys for in-JS sort, which grew unbounded with group history.
+  // The merge-then-slice in JS is still correct: an item ranked outside the
+  // top-N of its source can't outrank items already inside the top-N from
+  // the other source, so the page-slice over the merge is exact.
+  const feedSliceCap = feedPage * FEED_PAGE_SIZE
+  const noWinnerCondition = and(
+    eq(giveaways.groupId, groupRow.id),
+    // Only ended giveaways count as "no winner"; in-progress ones live in
+    // the dedicated section above and would otherwise double-count.
+    lt(giveaways.endedAt, now),
+    giveawayNotDeleted(),
+    sql`NOT EXISTS (SELECT 1 FROM ${wins} WHERE ${wins.giveawayId} = ${giveaways.id})`,
+  )
   const inProgressCreators = alias(users, 'in_progress_creators')
-  const [inProgressRows, inProgressTotalRow, winKeyRows, noWinnerKeyRows] = await Promise.all([
+  const [
+    inProgressRows,
+    inProgressTotalRow,
+    winKeyRows,
+    noWinnerKeyRows,
+    winCountRow,
+    noWinnerCountRow,
+  ] = await Promise.all([
     db
       .select({
         giveaway: giveaways,
@@ -468,20 +486,21 @@ export const getGroupOverviewPage = async (
       .select({ id: wins.id, effectiveAt: wins.wonAt })
       .from(wins)
       .innerJoin(giveaways, eq(giveaways.id, wins.giveawayId))
-      .where(and(eq(giveaways.groupId, groupRow.id), giveawayNotDeleted())),
+      .where(and(eq(giveaways.groupId, groupRow.id), giveawayNotDeleted()))
+      .orderBy(desc(wins.wonAt))
+      .limit(feedSliceCap),
     db
       .select({ id: giveaways.id, effectiveAt: giveaways.endedAt })
       .from(giveaways)
-      .where(
-        and(
-          eq(giveaways.groupId, groupRow.id),
-          // Only ended giveaways count as "no winner"; in-progress ones live
-          // in the dedicated section above and would otherwise double-count.
-          lt(giveaways.endedAt, now),
-          giveawayNotDeleted(),
-          sql`NOT EXISTS (SELECT 1 FROM ${wins} WHERE ${wins.giveawayId} = ${giveaways.id})`,
-        ),
-      ),
+      .where(noWinnerCondition)
+      .orderBy(desc(giveaways.endedAt))
+      .limit(feedSliceCap),
+    db
+      .select({ n: count() })
+      .from(wins)
+      .innerJoin(giveaways, eq(giveaways.id, wins.giveawayId))
+      .where(and(eq(giveaways.groupId, groupRow.id), giveawayNotDeleted())),
+    db.select({ n: count() }).from(giveaways).where(noWinnerCondition),
   ])
 
   const inProgress: Page<GiveawayView> = {
@@ -491,17 +510,17 @@ export const getGroupOverviewPage = async (
     pageSize: IN_PROGRESS_PAGE_SIZE,
   }
 
-  const allKeys: FeedKey[] = [
+  const mergedKeys: FeedKey[] = [
     ...winKeyRows.map((r): FeedKey => ({ kind: 'win', id: r.id, effectiveAt: r.effectiveAt })),
     ...noWinnerKeyRows.map(
       (r): FeedKey => ({ kind: 'no_winner_giveaway', id: r.id, effectiveAt: r.effectiveAt }),
     ),
   ]
-  allKeys.sort(compareFeedKeys)
+  mergedKeys.sort(compareFeedKeys)
 
-  const feedTotal = allKeys.length
+  const feedTotal = (winCountRow[0]?.n ?? 0) + (noWinnerCountRow[0]?.n ?? 0)
   const feedOffset = toOffset(feedPage, FEED_PAGE_SIZE)
-  const pageKeys = allKeys.slice(feedOffset, feedOffset + FEED_PAGE_SIZE)
+  const pageKeys = mergedKeys.slice(feedOffset, feedOffset + FEED_PAGE_SIZE)
 
   const winIds = pageKeys.flatMap((k) => (k.kind === 'win' ? [k.id] : []))
   const noWinnerIds = pageKeys.flatMap((k) => (k.kind === 'no_winner_giveaway' ? [k.id] : []))

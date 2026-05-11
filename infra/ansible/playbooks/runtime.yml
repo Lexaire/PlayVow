@@ -32,6 +32,69 @@
         state: present
         update_cache: true
 
+    # Rebuild Caddy with the cache-handler module so anonymous HTML can be
+    # served from Caddy's in-memory cache instead of re-rendering through
+    # Node every request. The build runs only when the cache module is
+    # missing from the installed binary; once swapped in, the apt package is
+    # held so `apt upgrade` doesn't replace our build. To force a rebuild
+    # (e.g. Caddy security release), `apt-mark unhold caddy && apt upgrade
+    # caddy` then re-run this playbook.
+    - name: Install Go toolchain (for xcaddy build)
+      ansible.builtin.apt:
+        name: golang-go
+        state: present
+
+    # Caddy + cache-handler pulls in ~500MB of build artifacts (smallstep,
+    # opentelemetry, prometheus, KMS providers, etc.). On a small VPS `/tmp`
+    # is often tmpfs and runs out mid-build. Park Go's temp + cache on the
+    # real filesystem under /root so the build has all the disk it needs.
+    - name: Ensure Go build temp/cache directories exist on disk
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /root/go
+        - /root/go-tmp
+        - /root/.cache/go-build
+
+    - name: Install xcaddy
+      ansible.builtin.shell: |
+        GOBIN=/usr/local/bin go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+      args:
+        creates: /usr/local/bin/xcaddy
+      environment:
+        GOPATH: /root/go
+        GOCACHE: /root/.cache/go-build
+        GOTMPDIR: /root/go-tmp
+
+    - name: Inspect installed caddy modules
+      ansible.builtin.command: /usr/bin/caddy list-modules
+      changed_when: false
+      register: caddy_modules
+
+    - name: Build Caddy with cache-handler module (only if missing)
+      ansible.builtin.shell: |
+        set -e
+        /usr/local/bin/xcaddy build \
+          --with github.com/caddyserver/cache-handler \
+          --output /root/go-tmp/caddy.new
+        install -o root -g root -m 0755 /root/go-tmp/caddy.new /usr/bin/caddy
+        rm -f /root/go-tmp/caddy.new
+      when: '"http.handlers.cache" not in caddy_modules.stdout'
+      environment:
+        GOPATH: /root/go
+        GOCACHE: /root/.cache/go-build
+        GOTMPDIR: /root/go-tmp
+      notify: Restart caddy
+
+    - name: Hold apt caddy package so upgrades don't clobber the custom build
+      ansible.builtin.dpkg_selections:
+        name: caddy
+        selection: hold
+
     - name: Drop project Caddyfile in place
       ansible.builtin.copy:
         src: ../files/caddy/Caddyfile
@@ -69,8 +132,8 @@
         content: |
           [Service]
           EnvironmentFile=/etc/caddy/Caddyfile.env
-          MemoryHigh=80M
-          MemoryMax=100M
+          MemoryHigh=120M
+          MemoryMax=160M
           TasksMax=512
           LimitNOFILE=65535
           OOMScoreAdjust=200
