@@ -58,20 +58,42 @@ export const findUserById = async (db: DbOrTx, id: number): Promise<User | null>
   return row ?? null
 }
 
-// SG-keyed upsert. When the SG scrape carries a steamId and there's already a
-// Steam-only row with that steamId (created by Steam Sign-In before SG scrape
-// ever ran), claim that row by setting its sg username — no duplicate.
+// SG-keyed upsert. steam_id is the stable identity: a SteamGifts user can
+// rename on SG but keeps the same Steam account. So whenever a row already
+// exists for this steamId, claim it — refreshing its SG username and fields —
+// rather than inserting a duplicate that would violate the steam_id unique
+// constraint. This covers two cases that both carry a steamId:
+//   - a Steam-only row (null sg username) created by Steam Sign-In before any
+//     scrape ran, and
+//   - an SG rename, where the row still holds the user's previous username.
 export const upsertUserBySgUsername = async (
   db: DbOrTx,
   input: UpsertUserBySgUsernameInput,
 ): Promise<User> => {
   if (input.steamId) {
     const existingBySteam = await findUserBySteamId(db, input.steamId)
-    if (existingBySteam && existingBySteam.steamgiftsUsername === null) {
+    if (existingBySteam) {
+      // Set/refresh the SG username on the canonical steamId row. Only check
+      // for a clash when the name would actually change (the steady-state
+      // re-scrape keeps the same name): renaming to a username a *different*
+      // row already holds would itself break the steamgifts_username unique
+      // constraint. The scrape resolves a username to its own row before
+      // reaching here, so that clash isn't reachable from the scrape path —
+      // but guard it anyway and just refresh the other fields instead of
+      // crashing. (SG usernames compare case-insensitively.)
+      const currentName = existingBySteam.steamgiftsUsername
+      const needsRename =
+        currentName === null ||
+        currentName.toLowerCase() !== input.steamgiftsUsername.toLowerCase()
+      let canRename = false
+      if (needsRename) {
+        const holder = await findUserBySteamgiftsUsername(db, input.steamgiftsUsername)
+        canRename = holder === null || holder.id === existingBySteam.id
+      }
       const [row] = await db
         .update(users)
         .set({
-          steamgiftsUsername: input.steamgiftsUsername,
+          ...(canRename ? { steamgiftsUsername: input.steamgiftsUsername } : {}),
           personaName: input.personaName ?? existingBySteam.personaName,
           avatarUrl: input.avatarUrl ?? existingBySteam.avatarUrl,
           profileVisibility: input.profileVisibility ?? existingBySteam.profileVisibility,
@@ -79,7 +101,7 @@ export const upsertUserBySgUsername = async (
         })
         .where(eq(users.id, existingBySteam.id))
         .returning()
-      if (!row) throw new Error(`failed to link sg=${input.steamgiftsUsername} to steamId row`)
+      if (!row) throw new Error(`failed to claim steamId row for sg=${input.steamgiftsUsername}`)
       return row
     }
   }

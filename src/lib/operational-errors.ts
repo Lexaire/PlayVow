@@ -6,6 +6,7 @@ export type OperationalErrorCategory =
   | 'steam_rate_limited'
   | 'steam_unavailable'
   | 'db_busy'
+  | 'db_constraint'
   | 'db_unreachable'
   | 'network_timeout'
   | 'unknown'
@@ -81,7 +82,21 @@ const RULES: ReadonlyArray<PatternRule> = [
     }),
   },
   {
-    pattern: /5\d\d|service unavailable|gateway timeout|bad gateway/i,
+    // SQLite constraint violations are data/logic bugs, never transient. Match
+    // them before the 5xx rules below: a failing-query dump carries Steam IDs
+    // and timestamps whose digits could otherwise read as an HTTP 5xx. No
+    // `jobs` filter — a constraint can fail in any job.
+    pattern: /constraint failed|SQLITE_CONSTRAINT/i,
+    build: () => ({
+      category: 'db_constraint',
+      summary: 'A database write was rejected by a constraint.',
+      suggestion: 'This is a bug, not a transient outage — check the worker logs for the query.',
+    }),
+  },
+  {
+    // \b...\b so a Steam ID like 76561198094834966 (note the "561") in a failed
+    // query's params can't masquerade as an HTTP 5xx status.
+    pattern: /\b5\d\d\b|service unavailable|gateway timeout|bad gateway/i,
     jobs: SG_JOBS,
     build: () => ({
       category: 'sg_unavailable',
@@ -90,7 +105,7 @@ const RULES: ReadonlyArray<PatternRule> = [
     }),
   },
   {
-    pattern: /5\d\d|service unavailable|gateway timeout|bad gateway/i,
+    pattern: /\b5\d\d\b|service unavailable|gateway timeout|bad gateway/i,
     jobs: STEAM_JOBS,
     build: () => ({
       category: 'steam_unavailable',
@@ -152,6 +167,27 @@ const RULES: ReadonlyArray<PatternRule> = [
     },
   },
 ]
+
+// Driver/ORM errors hide the real reason in `.cause`: Drizzle's
+// DrizzleQueryError.message is only "Failed query: <sql> params: <...>", with
+// the actual failure ("UNIQUE constraint failed: users.steam_id") on `.cause`.
+// Walk the chain so the stored message — and the categorisation above — see the
+// underlying reason rather than just the SQL that ran.
+export const flattenErrorMessage = (error: unknown): string => {
+  const parts: string[] = []
+  const seen = new Set<unknown>()
+  let current: unknown = error
+  while (current !== null && current !== undefined && !seen.has(current)) {
+    seen.add(current)
+    if (!(current instanceof Error)) {
+      parts.push(String(current))
+      break
+    }
+    if (current.message) parts.push(current.message)
+    current = current.cause
+  }
+  return parts.join(' | ')
+}
 
 export const formatOperationalError = (
   rawMessage: string,

@@ -5,6 +5,7 @@ import type { JobRunTrigger } from '#/db/schema'
 import type { Analytics } from '#/lib/analytics'
 import type { CountingFetcher } from '#/lib/counting-fetcher'
 import type { Logger } from '#/lib/logger'
+import { flattenErrorMessage } from '#/lib/operational-errors'
 import { finalizeJobRun, insertJobRunStart } from '#/repos/jobRuns'
 
 export type ScheduledJob = {
@@ -93,7 +94,7 @@ export const runJob = async (job: ScheduledJob, opts: RunJobOptions): Promise<Jo
     summary = await job.run()
   } catch (e) {
     outcome = 'failed'
-    errorMessage = e instanceof Error ? e.message : String(e)
+    errorMessage = flattenErrorMessage(e)
   }
   const finishedAt = now()
   const durationMs = finishedAt.getTime() - startedAt.getTime()

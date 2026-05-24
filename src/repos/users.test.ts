@@ -118,6 +118,53 @@ describe('usersRepo', () => {
     expect(all.length).toBe(1)
   })
 
+  it('SG rename: claims the existing steamId row instead of duplicating on steam_id', async () => {
+    // Same Steam account, previously scraped under an older SG username.
+    const before = await upsertUserBySgUsername(db, {
+      steamgiftsUsername: 'oldname' as SteamGiftsUsername,
+      steamId: STEAM_A,
+      avatarUrl: 'old.jpg',
+    })
+
+    // The user renamed on SteamGifts; the scrape now sees the new username with
+    // the same steamId. Pre-fix this threw "UNIQUE constraint failed:
+    // users.steam_id" because it fell through to a plain insert.
+    const after = await upsertUserBySgUsername(db, {
+      steamgiftsUsername: ROBIN,
+      steamId: STEAM_A,
+      avatarUrl: 'new.jpg',
+    })
+    expect(after.id).toBe(before.id)
+    expect(after.steamgiftsUsername).toBe(ROBIN)
+    expect(after.avatarUrl).toBe('new.jpg')
+
+    const all = await db.select().from(await import('#/db/schema').then((m) => m.users))
+    expect(all.length).toBe(1)
+  })
+
+  it('SG rename: does not rename when another row already holds the target username', async () => {
+    const canonical = await upsertUserBySgUsername(db, {
+      steamgiftsUsername: 'oldname' as SteamGiftsUsername,
+      steamId: STEAM_A,
+    })
+    // A separate, steamId-less row already owns ROBIN.
+    const holder = await upsertUserBySgUsername(db, { steamgiftsUsername: ROBIN })
+
+    // Refresh the canonical row's fields without renaming — and without
+    // crashing on the steamgifts_username unique constraint.
+    const refreshed = await upsertUserBySgUsername(db, {
+      steamgiftsUsername: ROBIN,
+      steamId: STEAM_A,
+      avatarUrl: 'refreshed.jpg',
+    })
+    expect(refreshed.id).toBe(canonical.id)
+    expect(refreshed.steamgiftsUsername).toBe('oldname')
+    expect(refreshed.avatarUrl).toBe('refreshed.jpg')
+
+    const stillHolder = await findUserBySteamgiftsUsername(db, ROBIN)
+    expect(stillHolder?.id).toBe(holder.id)
+  })
+
   it('SG-scrape without steamId still creates a fresh SG row when no Steam row exists', async () => {
     const u = await upsertUserBySgUsername(db, { steamgiftsUsername: SPARROW })
     expect(u.steamgiftsUsername).toBe(SPARROW)

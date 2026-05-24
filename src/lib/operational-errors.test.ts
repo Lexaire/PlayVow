@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatOperationalError } from './operational-errors'
+import { flattenErrorMessage, formatOperationalError } from './operational-errors'
 
 const sg = { jobName: 'scrape_groups' }
 const backfill = { jobName: 'backfill_winners' }
@@ -142,6 +142,47 @@ describe('formatOperationalError', () => {
     it('maps SQLITE_BUSY for unknown jobs', () => {
       const result = formatOperationalError('SQLITE_BUSY', unknown)
       expect(result.category).toBe('db_busy')
+    })
+  })
+
+  describe('db_constraint', () => {
+    it('maps a UNIQUE constraint failure to db_constraint', () => {
+      const result = formatOperationalError('UNIQUE constraint failed: users.steam_id', sg)
+      expect(result.category).toBe('db_constraint')
+    })
+
+    it('maps SQLITE_CONSTRAINT to db_constraint for any job', () => {
+      const result = formatOperationalError('SQLITE_CONSTRAINT_UNIQUE: write rejected', unknown)
+      expect(result.category).toBe('db_constraint')
+    })
+
+    it('does not mistake a Steam ID in a failed-query dump for an HTTP 5xx', () => {
+      // The "561" inside the Steam ID used to match /5\d\d/ and mislabel this
+      // DB error as "SteamGifts is returning a server error".
+      const raw =
+        'Failed query: insert into "users" ... params: Kzander,76561198094834966,user,Kzander | UNIQUE constraint failed: users.steam_id'
+      const result = formatOperationalError(raw, sg)
+      expect(result.category).toBe('db_constraint')
+    })
+  })
+
+  describe('flattenErrorMessage', () => {
+    it('joins an error and its cause chain', () => {
+      const cause = new Error('UNIQUE constraint failed: users.steam_id')
+      const wrapped = new Error('Failed query: insert into "users" ...', { cause })
+      expect(flattenErrorMessage(wrapped)).toBe(
+        'Failed query: insert into "users" ... | UNIQUE constraint failed: users.steam_id',
+      )
+    })
+
+    it('stringifies non-Error values', () => {
+      expect(flattenErrorMessage('boom')).toBe('boom')
+    })
+
+    it('does not loop on a cyclic cause', () => {
+      const a = new Error('a')
+      a.cause = a
+      expect(flattenErrorMessage(a)).toBe('a')
     })
   })
 
